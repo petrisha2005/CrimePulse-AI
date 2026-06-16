@@ -1,0 +1,66 @@
+export const crimeCsvColumns = [
+  "District_Name",
+  "UnitName",
+  "FIR_YEAR",
+  "FIR_MONTH",
+  "Offence_Duration",
+  "FIR_Day",
+  "FIR Type",
+  "FIR_Stage",
+  "Complaint_Mode",
+  "CrimeGroup_Name",
+  "CrimeHead_Name",
+  "Latitude",
+  "Longitude",
+  "ActSection",
+  "IOName",
+  "KGID",
+  "Internal_IO",
+  "Place of Offence",
+  "Distance from PS",
+  "Beat_Name",
+  "Village_Area_Name",
+  "Male",
+  "Female",
+  "Boy",
+  "Girl",
+  "Age 0",
+  "VICTIM COUNT",
+  "Accused Count",
+  "Arrested Male",
+  "Arrested Female",
+  "Arrested Count No.",
+  "Accused_ChargeSheeted Count",
+  "Conviction Count",
+  "Unit_ID"
+];
+
+export const crimeCsvMapping = [
+  ["district", "District_Name"],
+  ["police_station", "UnitName"],
+  ["crime_type", "CrimeGroup_Name"],
+  ["crime_subtype", "CrimeHead_Name"],
+  ["severity_original", "FIR Type"],
+  ["fir_year", "FIR_YEAR"],
+  ["fir_month", "FIR_MONTH"],
+  ["fir_day", "FIR_Day"],
+  ["crime_date", "FIR_YEAR + FIR_MONTH + FIR_Day"],
+  ["latitude_value", "Latitude"],
+  ["longitude_value", "Longitude"],
+  ["offence_location", "Place of Offence"],
+  ["beat_name", "Beat_Name"],
+  ["village_area_name", "Village_Area_Name"],
+  ["fir_stage", "FIR_Stage"],
+  ["complaint_mode", "Complaint_Mode"],
+  ["act_section", "ActSection"],
+  ["victim_count", "VICTIM COUNT"],
+  ["accused_count", "Accused Count"],
+  ["arrested_count", "Arrested Count No."],
+  ["conviction_count", "Conviction Count"],
+  ["unit_id", "Unit_ID"]
+];
+
+export const sampleCrimeCsv = `${crimeCsvColumns.join(",")}
+Bengaluru City,Indiranagar,2026,1,2 hours,5,Non Heinous,Registered,Written,THEFT,CHAIN SNATCHING,12.9719,77.6412,IPC 379,Inspector A,KGID001,Yes,Near metro station,1 KM,Beat 12,Indiranagar,1,0,0,0,0,1,1,0,0,0,0,0,BLR-001
+Mysuru,Lashkar,2026,1,1 day,8,Heinous,Under Investigation,Online,ASSAULT,GRIEVOUS HURT,,,IPC 307,Inspector B,KGID002,No,Market road,2 KM,Central Beat,Lashkar Mohalla,1,1,0,0,0,2,3,1,0,1,0,0,MYS-004
+`;

@@ -1,0 +1,10 @@
+{
+  "name": "socio-economic-api",
+  "version": "1.0.0",
+  "main": "index.js",
+  "dependencies": {
+    "csv-parse": "^5.6.0",
+    "formidable": "^3.5.2",
+    "zcatalyst-sdk-node": "latest"
+  }
+}

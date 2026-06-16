@@ -1,0 +1,196 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #06111f;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background:
+    linear-gradient(135deg, rgba(46, 139, 216, 0.12), transparent 32%),
+    radial-gradient(circle at 80% 12%, rgba(239, 68, 68, 0.08), transparent 28%),
+    #06111f;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+::selection {
+  background: rgba(131, 197, 255, 0.35);
+  color: #ffffff;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+button,
+a,
+select,
+input {
+  -webkit-tap-highlight-color: transparent;
+}
+
+:focus-visible {
+  outline: 2px solid #83c5ff;
+  outline-offset: 2px;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0a1728;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #1e3a55;
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #2e8bd8;
+}
+
+.crime-radar {
+  box-shadow:
+    inset 0 0 80px rgba(46, 139, 216, 0.18),
+    0 0 90px rgba(46, 139, 216, 0.18);
+}
+
+.crime-sweep {
+  animation: radar-sweep 5s linear infinite;
+  clip-path: polygon(50% 100%, 0 0, 100% 0);
+}
+
+.crime-pulse-dot {
+  animation: alert-pulse 1.7s ease-in-out infinite;
+}
+
+.crime-data-stream {
+  height: 100vh;
+  overflow: hidden;
+  mask-image: linear-gradient(transparent, black 16%, black 84%, transparent);
+}
+
+.crime-data-stream-inner {
+  animation: data-stream-scroll 22s linear infinite;
+  will-change: transform;
+}
+
+.crime-floating-alert {
+  animation: floating-alert 7s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+
+.crime-signal-ring {
+  animation: signal-ring 4.8s ease-out infinite;
+  opacity: 0;
+  will-change: transform, opacity;
+}
+
+.animation-delay-0 {
+  animation-delay: 0ms;
+}
+
+.animation-delay-700 {
+  animation-delay: 700ms;
+}
+
+.animation-delay-1000 {
+  animation-delay: 1000ms;
+}
+
+.animation-delay-1400 {
+  animation-delay: 1400ms;
+}
+
+.animation-delay-2000 {
+  animation-delay: 2000ms;
+}
+
+.animation-delay-2100 {
+  animation-delay: 2100ms;
+}
+
+.animation-delay-2800 {
+  animation-delay: 2800ms;
+}
+
+@keyframes radar-sweep {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes alert-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.8;
+  }
+  50% {
+    transform: scale(1.55);
+    opacity: 1;
+  }
+}
+
+@keyframes data-stream-scroll {
+  from {
+    transform: translate3d(0, -50%, 0);
+  }
+  to {
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes floating-alert {
+  0%,
+  100% {
+    opacity: 0.08;
+    transform: translate3d(0, 10px, 0) scale(0.96);
+  }
+  38%,
+  68% {
+    opacity: 0.36;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes signal-ring {
+  0% {
+    opacity: 0.42;
+    transform: scale3d(0.2, 0.2, 1);
+  }
+  72% {
+    opacity: 0;
+    transform: scale3d(2.8, 2.8, 1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale3d(2.8, 2.8, 1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}

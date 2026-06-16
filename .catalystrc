@@ -1,0 +1,48 @@
+{
+  "defaults": {
+    "project": 1,
+    "env": 1
+  },
+  "actives": {
+    "project": 2,
+    "env": 1
+  },
+  "projects": [
+    {
+      "idx": 1,
+      "id": "49043000000013047",
+      "name": "CrimePulseAI",
+      "domain": {
+        "id": "50043062622",
+        "name": "crimepulseai-60074007433.development"
+      },
+      "timezone": "Asia/Kolkata",
+      "env": [
+        {
+          "idx": 1,
+          "id": "60074007433",
+          "name": "Development",
+          "type": 3
+        }
+      ]
+    },
+    {
+      "idx": 2,
+      "id": "49902000000013050",
+      "name": "DataNexusCrime",
+      "domain": {
+        "id": "50042868393",
+        "name": "datanexuscrime-60073499856.development"
+      },
+      "timezone": "Asia/Kolkata",
+      "env": [
+        {
+          "idx": 1,
+          "id": "60073499856",
+          "name": "Development",
+          "type": 3
+        }
+      ]
+    }
+  ]
+}

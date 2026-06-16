@@ -1,0 +1,54 @@
+import type { ApiResponse, ChartDatum, CrimeRecord, DashboardSummary, MonthlyTrend, UploadSummary } from "../types/crime";
+
+const crimeApiBase = import.meta.env.VITE_CRIME_API_BASE || "/server/crime-api";
+const dashboardApiBase = import.meta.env.VITE_DASHBOARD_API_BASE || "/server/dashboard-api";
+
+const request = async <T>(url: string, options?: RequestInit): Promise<T> => {
+  const response = await fetch(url, {
+    headers: {
+      "Content-Type": "application/json",
+      ...(options?.headers || {})
+    },
+    ...options
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => ({}));
+    throw new Error(errorBody.message || `Request failed with status ${response.status}`);
+  }
+
+  return response.json();
+};
+
+export const crimeApi = {
+  getCrimes: () => request<ApiResponse<CrimeRecord[]>>(`${crimeApiBase}/crimes`),
+  createCrime: (crime: CrimeRecord) =>
+    request<ApiResponse<CrimeRecord>>(`${crimeApiBase}/crimes`, {
+      method: "POST",
+      body: JSON.stringify(crime)
+    }),
+  uploadCsv: async (file: File) => {
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const response = await fetch(`${crimeApiBase}/crimes/upload-csv`, {
+      method: "POST",
+      body: formData
+    });
+
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body.message || "CSV upload failed");
+    }
+
+    return response.json() as Promise<ApiResponse<UploadSummary>>;
+  }
+};
+
+export const dashboardApi = {
+  getSummary: () => request<ApiResponse<DashboardSummary>>(`${dashboardApiBase}/dashboard/summary`),
+  getMonthlyTrends: () => request<ApiResponse<MonthlyTrend[]>>(`${dashboardApiBase}/dashboard/monthly-trends`),
+  getCrimeTypes: () => request<ApiResponse<ChartDatum[]>>(`${dashboardApiBase}/dashboard/crime-types`),
+  getDistrictRanking: () => request<ApiResponse<ChartDatum[]>>(`${dashboardApiBase}/dashboard/district-ranking`),
+  getFirStageSummary: () => request<ApiResponse<ChartDatum[]>>(`${dashboardApiBase}/dashboard/fir-stage-summary`)
+};

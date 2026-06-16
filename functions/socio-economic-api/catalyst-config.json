@@ -1,0 +1,10 @@
+{
+  "deployment": {
+    "name": "socio-economic-api",
+    "stack": "node18",
+    "type": "advancedio"
+  },
+  "execution": {
+    "main": "index.js"
+  }
+}

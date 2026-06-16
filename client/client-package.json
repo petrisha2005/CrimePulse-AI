@@ -1,0 +1,9 @@
+{
+  "name": "crimepulse-ai-client",
+  "version": "1.0.0",
+  "homepage": "/app/",
+  "scripts": {
+    "build": "npm run build"
+  },
+  "build_path": "dist"
+}

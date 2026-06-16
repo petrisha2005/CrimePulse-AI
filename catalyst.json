@@ -1,0 +1,20 @@
+{
+  "functions": {
+    "targets": [
+      "crime-api",
+      "dashboard-api",
+      "risk-api",
+      "alert-api",
+      "map-api",
+      "time-machine-api",
+      "forecast-api",
+      "socio-economic-api",
+      "pattern-api",
+      "report-api",
+      "ai-api"
+    ]
+  },
+  "client": {
+    "source": "catalyst-client"
+  }
+}

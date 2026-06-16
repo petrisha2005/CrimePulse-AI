@@ -1,0 +1,9 @@
+{
+  "name": "report-api",
+  "version": "1.0.0",
+  "main": "index.js",
+  "dependencies": {
+    "pdfkit": "^0.15.2",
+    "zcatalyst-sdk-node": "latest"
+  }
+}
