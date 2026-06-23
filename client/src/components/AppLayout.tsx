@@ -1,16 +1,21 @@
-import { Activity, BarChart3, BellRing, BrainCircuit, Clock3, CloudSun, FileText, Fingerprint, FolderSearch, GraduationCap, LogOut, Map, Presentation, Radar, Shield, Sparkles, UploadCloud, UserCircle } from "lucide-react";
+import { Activity, BarChart3, BellRing, BrainCircuit, Clock3, CloudSun, FileText, Fingerprint, FolderSearch, GraduationCap, Home, LogOut, Map, Presentation, Radar, Shield, Sparkles, UploadCloud, UserCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import DatasetStatusWidget from "./DatasetStatusWidget";
-import { authService, type AuthUser } from "../services/authService";
+import { useAuth } from "../auth/AuthContext";
+import RoleBadge from "./auth/RoleBadge";
+import { getScopeLabel } from "../auth/accessScope";
 import { crimeService } from "../services/crimeService";
 import { dashboardService } from "../services/dashboardService";
 import type { GlobalStats } from "../types/crime";
+import type { CrimeDataset } from "../types/crime";
+import { getActiveDatasetId, setActiveDatasetId } from "../services/datasetScope";
 
 const navGroups = [
   {
     label: "Core",
     items: [
+      { label: "Home", to: "/home", icon: Home },
       { label: "Dashboard", to: "/dashboard", icon: Activity },
       { label: "Upload Crime Data", to: "/upload", icon: UploadCloud },
       { label: "Crime Records", to: "/records", icon: FolderSearch }
@@ -56,9 +61,11 @@ const getTotalRecords = (response: { totalRecords?: number; data?: { totalRecord
   response.totalRecords ?? response.data?.totalRecords ?? 0;
 
 const AppLayout = () => {
-  const [user, setUser] = useState<AuthUser | null>(null);
   const [stats, setStats] = useState<GlobalStats | null>(null);
+  const [datasets, setDatasets] = useState<CrimeDataset[]>([]);
+  const [activeDatasetId, setActiveDatasetIdState] = useState(getActiveDatasetId());
   const location = useLocation();
+  const { currentUser: user, canAccessRoute, logout, preferences } = useAuth();
   const pageTitle = navItems.find((item) => item.to === location.pathname)?.label || "CrimePulse AI";
 
   const loadGlobalStats = async () => {
@@ -116,31 +123,33 @@ const AppLayout = () => {
   };
 
   useEffect(() => {
-    authService.getCurrentUser().then(setUser);
     loadGlobalStats();
+    crimeService.getDatasets().then((response) => setDatasets(response.data || [])).catch(() => setDatasets([]));
     window.addEventListener("crimepulse:dataset-updated", loadGlobalStats);
     return () => window.removeEventListener("crimepulse:dataset-updated", loadGlobalStats);
   }, []);
 
   return (
-  <div className="min-h-screen bg-command-950 text-slate-100">
+  <div className={`min-h-screen min-w-0 bg-command-950 text-slate-100 ${preferences?.themeDensity === "compact" ? "density-compact" : "density-comfortable"}`}>
     <aside className="fixed inset-y-0 left-0 z-20 hidden w-72 flex-col border-r border-command-700/70 bg-command-900/95 px-5 py-6 shadow-glow lg:flex">
-      <div className="flex items-center gap-3">
+      <div className="flex min-w-0 items-center gap-3">
         <div className="flex h-11 w-11 items-center justify-center rounded border border-command-500/60 bg-command-800">
           <Shield className="h-6 w-6 text-command-300" />
         </div>
-        <div>
+        <div className="min-w-0">
           <p className="text-sm uppercase tracking-[0.18em] text-command-300">Karnataka Police</p>
           <h1 className="text-lg font-semibold">CrimePulse AI</h1>
         </div>
       </div>
 
       <nav className="mt-8 min-h-0 flex-1 space-y-5 overflow-y-auto pr-1">
-        {navGroups.map((group) => (
-          <div key={group.label}>
+        {navGroups.map((group) => {
+          const visibleItems = group.items.filter((item) => canAccessRoute(item.to));
+          if (!visibleItems.length) return null;
+          return <div key={group.label}>
             <p className="mb-2 px-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">{group.label}</p>
             <div className="space-y-1.5">
-              {group.items.map(({ label, to, icon: Icon }) => (
+              {visibleItems.map(({ label, to, icon: Icon }) => (
                 <NavLink
                   key={to}
                   to={to}
@@ -152,23 +161,23 @@ const AppLayout = () => {
                     }`
                   }
                 >
-                  <Icon className="h-5 w-5" />
-                  {label}
+                  <Icon className="h-5 w-5 shrink-0" />
+                  <span className="min-w-0 truncate">{label}</span>
                 </NavLink>
               ))}
             </div>
-          </div>
-        ))}
+          </div>;
+        })}
       </nav>
 
       <div className="mt-5 space-y-3">
         <div className="rounded-md border border-command-700 bg-command-850 px-3 py-3">
           <p className="truncate text-sm font-medium text-white">{user?.name || "Authorized Officer"}</p>
-          <p className="truncate text-xs text-slate-400">{user?.email || "Catalyst authenticated user"}</p>
+          <p className="truncate text-xs text-slate-400">{user?.roleLabel || "Authorized role"} · {getScopeLabel(user)}</p>
         </div>
         <button
           className="flex w-full items-center justify-center gap-2 rounded-md border border-command-700 px-3 py-3 text-sm text-slate-300 hover:bg-command-850"
-          onClick={() => authService.logout()}
+          onClick={() => void logout()}
           type="button"
         >
           <LogOut className="h-4 w-4" />
@@ -178,27 +187,29 @@ const AppLayout = () => {
     </aside>
 
     <header className="sticky top-0 z-10 border-b border-command-700/60 bg-command-900/95 px-4 py-4 backdrop-blur lg:ml-72">
-      <div className="flex items-center justify-between gap-4">
-        <div className="flex items-center gap-2">
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-4">
+        <div className="flex min-w-0 items-center gap-2">
           <Shield className="h-6 w-6 text-command-300" />
           <span className="font-semibold lg:hidden">CrimePulse AI</span>
-          <div className="hidden lg:block">
+          <div className="hidden min-w-0 lg:block">
             <p className="text-xs uppercase tracking-[0.16em] text-command-300">Secure Command Session</p>
-            <h2 className="text-lg font-semibold text-white">{pageTitle}</h2>
+            <h2 className="truncate text-lg font-semibold text-white" title={pageTitle}>{pageTitle}</h2>
           </div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="ml-auto flex min-w-0 items-center gap-3">
+          {datasets.length > 0 && <label className="hidden max-w-48 xl:block"><span className="sr-only">Dataset scope</span><select className="w-full border border-command-700 bg-command-850 px-2 py-2 text-xs text-slate-200 outline-none" value={activeDatasetId} onChange={(event) => { const next = event.target.value; setActiveDatasetId(next); setActiveDatasetIdState(next); window.location.reload(); }}><option value="">All Datasets</option>{datasets.map((dataset) => <option key={dataset.dataset_id} value={dataset.dataset_id}>{dataset.dataset_name}</option>)}</select></label>}
           <DatasetStatusWidget stats={stats} compact />
-          <div className="hidden text-right sm:block">
-            <p className="text-sm font-medium text-white">{user?.name || "Authorized Officer"}</p>
-            <p className="text-xs text-slate-400">{user?.email || "Catalyst authenticated user"}</p>
+          <div className="hidden min-w-0 max-w-48 text-right sm:block">
+            <p className="truncate text-sm font-medium text-white" title={user?.name || "Authorized Officer"}>{user?.name || "Authorized Officer"}</p>
+            <div className="mt-1 flex justify-end"><RoleBadge role={user?.role || "crime_analyst"} label={user?.roleLabel || "Crime Analyst"} /></div>
+            <p className="mt-1 truncate text-xs text-slate-400" title={getScopeLabel(user)}>{getScopeLabel(user)}</p>
           </div>
           <div className="flex h-10 w-10 items-center justify-center rounded border border-command-700 bg-command-850">
             <UserCircle className="h-5 w-5 text-command-300" />
           </div>
           <button
             className="flex min-h-10 items-center justify-center gap-2 rounded-md border border-command-700 px-3 text-sm text-slate-300 hover:bg-command-850"
-            onClick={() => authService.logout()}
+            onClick={() => void logout()}
             type="button"
           >
             <LogOut className="h-4 w-4" />
@@ -207,7 +218,7 @@ const AppLayout = () => {
         </div>
       </div>
       <nav className="mt-4 grid grid-cols-2 gap-2 lg:hidden">
-        {navItems.map(({ label, to, icon: Icon }) => (
+        {navItems.filter((item) => canAccessRoute(item.to)).map(({ label, to, icon: Icon }) => (
           <NavLink
             key={to}
             to={to}
@@ -217,8 +228,8 @@ const AppLayout = () => {
               }`
             }
           >
-            <Icon className="h-4 w-4" />
-            {label}
+            <Icon className="h-4 w-4 shrink-0" />
+            <span className="truncate-2 min-w-0 text-center leading-tight">{label}</span>
           </NavLink>
         ))}
       </nav>

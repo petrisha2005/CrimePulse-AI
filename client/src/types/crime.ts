@@ -27,6 +27,11 @@ export interface CrimeRecord {
   conviction_count: number;
   unit_id: string;
   created_time: string;
+  dataset_id?: string;
+  dataset_name?: string;
+  upload_id?: string;
+  source_file_name?: string;
+  imported_at?: string;
 }
 
 export interface DashboardSummary {
@@ -506,6 +511,7 @@ export interface MapFilterOptions {
 }
 
 export interface TimeMachineFilters {
+  period?: string;
   start_year?: string;
   start_month?: string;
   end_year?: string;
@@ -556,7 +562,7 @@ export interface TimeMachineCompare {
   from_total?: number;
   to_total?: number;
   difference?: number;
-  trend?: "Rising" | "Falling" | "Stable";
+  trend?: "Rising" | "Falling" | "Increased" | "Reduced" | "Stable";
   changed_crime_types?: TimeMachineChangeItem[];
   changed_districts?: TimeMachineChangeItem[];
   insight?: string;
@@ -565,6 +571,7 @@ export interface TimeMachineCompare {
   selected_total: number;
   previous_total: number;
   percentage_change: number;
+  explanation?: string;
   top_increasing_districts: TimeMachineChangeItem[];
   top_decreasing_districts: TimeMachineChangeItem[];
   top_increasing_crime_types: TimeMachineChangeItem[];
@@ -587,10 +594,19 @@ export interface TimeMachineSummary {
   month_range: string;
   earliest_record: string;
   latest_record: string;
+  earliest_period?: string;
+  latest_period?: string;
+  peak_period?: string;
+  peak_period_crimes?: number;
   peak_year: string;
   peak_month: string;
   fastest_growing_crime_type: string;
-  trend_direction: "Rising" | "Falling" | "Stable";
+  fastest_rising_crime_type?: string;
+  fastest_falling_crime_type?: string;
+  most_active_district?: string;
+  percentage_change?: number;
+  time_machine_summary?: string;
+  trend_direction: "Rising" | "Falling" | "Increasing" | "Decreasing" | "Stable";
   total_periods_available: number;
 }
 
@@ -609,10 +625,12 @@ export interface TimeMachineYearlyItem {
 
 export interface TimeMachineMonthlyItem {
   month: string;
+  month_name?: string;
   total_crimes: number;
   average_per_year: number;
   top_crime_type: string;
   seasonal_risk_level: "Low" | "Medium" | "High" | "Critical";
+  risk_level?: "Low" | "Medium" | "High" | "Critical";
 }
 
 export interface TimeMachineInsight {
@@ -622,6 +640,24 @@ export interface TimeMachineInsight {
   related_district: string;
   related_crime_type: string;
   suggested_action: string;
+}
+
+export interface TimeMachinePeriodDetails {
+  period: string;
+  previous_period: string;
+  total_crimes: number;
+  previous_total: number;
+  percentage_change: number;
+  trend_direction: "Increasing" | "Decreasing" | "Stable";
+  top_crime_type: string;
+  top_district: string;
+  heinous_count: number;
+  top_crime_types: ChartDatum[];
+  districts: ChartDatum[];
+  police_stations: ChartDatum[];
+  severity_distribution: ChartDatum[];
+  coordinate_mode: string;
+  insight: string;
 }
 
 export interface TimePresetOption {
@@ -1223,14 +1259,51 @@ export interface UploadSummary {
   storageVerified: boolean;
   storedRecordCountAfterUpload: number;
   batchErrors?: string[];
+  upload_id?: string;
+  skippedDuplicates?: number;
+  warningRows?: number;
+  durationSeconds?: number;
+  detectedDistricts?: string[];
+  detectedCrimeTypes?: string[];
+  detectedYearRange?: string;
+  failedRowDetails?: Array<{ row?: number; errors?: string[]; error?: string; raw?: Record<string, string> }>;
+}
+
+export interface DetectedCsvMapping {
+  mapping: Record<string, string>;
+  confidence: Record<string, number>;
+  validDataset: boolean;
+  missingMinimum: string[];
+  unmappedColumns: string[];
 }
 
 export interface CsvPreview {
   headers: string[];
   rows: Record<string, string>[];
   missingRequired: string[];
+  detectedMapping?: DetectedCsvMapping;
+  analysis?: {
+    totalRows: number;
+    validRows: number;
+    warningRows: number;
+    detectedDistricts: string[];
+    detectedCrimeTypes: string[];
+    detectedDateRange: string;
+  };
 }
 
 export interface CrimeCount {
   totalRecords: number;
+}
+
+export interface CrimeDataset {
+  dataset_id: string;
+  dataset_name: string;
+  source_file_name: string;
+  upload_id: string;
+  imported_at: string;
+  record_count: number;
+  year_range: string;
+  district_count: number;
+  crime_type_count: number;
 }

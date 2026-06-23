@@ -2,6 +2,7 @@ import type { ApiResponse, CrimePattern, PatternCharts, PatternFilterOptions, Pa
 import { readJsonOrLocalFallback } from "./localFallback";
 
 const patternApiBase = import.meta.env.VITE_PATTERN_API_BASE || "/server/pattern-api";
+type ApiErrorPayload = { message?: string; error?: string; details?: string };
 
 const shouldSend = (value: unknown) => {
   if (value === undefined || value === null) return false;
@@ -21,7 +22,7 @@ const queryString = (filters: PatternFilters = {}) => {
 const request = async <T>(path: string, filters?: PatternFilters): Promise<T> => {
   const response = await fetch(`${patternApiBase}${path}${queryString(filters)}`);
   if (!response.ok) {
-    const body = await readJsonOrLocalFallback<{ message?: string; error?: string; details?: string }>(response, path).catch(() => ({}));
+    const body: ApiErrorPayload = await readJsonOrLocalFallback<ApiErrorPayload>(response, path).catch(() => ({} as ApiErrorPayload));
     const parts = [body.message, body.error, body.details].filter(Boolean);
     throw new Error(parts.join(" | ") || `Pattern request failed with status ${response.status}`);
   }

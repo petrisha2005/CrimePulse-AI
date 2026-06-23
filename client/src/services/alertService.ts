@@ -2,6 +2,7 @@ import type { AlertCharts, AlertFilterOptions, AlertFilters, AlertSummary, ApiRe
 import { readJsonOrLocalFallback } from "./localFallback";
 
 const alertApiBase = import.meta.env.VITE_ALERT_API_BASE || "/server/alert-api";
+type ApiErrorPayload = { message?: string; error?: string; details?: string; path?: string };
 
 const shouldSend = (value: unknown) => {
   if (value === undefined || value === null) return false;
@@ -21,7 +22,7 @@ const queryString = (filters: AlertFilters = {}) => {
 const request = async <T>(path: string, filters?: AlertFilters): Promise<T> => {
   const response = await fetch(`${alertApiBase}${path}${queryString(filters)}`);
   if (!response.ok) {
-    const body = await readJsonOrLocalFallback<{ message?: string; error?: string; details?: string; path?: string }>(response, path).catch(() => ({}));
+    const body: ApiErrorPayload = await readJsonOrLocalFallback<ApiErrorPayload>(response, path).catch(() => ({} as ApiErrorPayload));
     const parts = [body.message, body.error, body.details].filter(Boolean);
     throw new Error(parts.join(" | ") || `Alert request failed with status ${response.status}`);
   }

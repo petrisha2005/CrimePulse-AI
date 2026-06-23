@@ -1,31 +1,20 @@
 import type { LucideIcon } from "lucide-react";
+import StatCard from "./ui/StatCard";
+import { MotionCard } from "./animation";
 
 interface DashboardCardProps {
   title: string;
   value: string | number;
   icon: LucideIcon;
   tone?: "blue" | "green" | "orange" | "red";
+  valueClassName?: string;
+  compactValue?: boolean;
 }
 
-const toneMap = {
-  blue: "border-command-500/40 text-command-300",
-  green: "border-alert-low/40 text-alert-low",
-  orange: "border-alert-high/40 text-alert-high",
-  red: "border-alert-critical/40 text-alert-critical"
-};
+const glowForTone = (tone: DashboardCardProps["tone"]) => tone === "red" || tone === "orange" ? "red" : tone === "blue" ? "cyan" : "purple";
 
-const DashboardCard = ({ title, value, icon: Icon, tone = "blue" }: DashboardCardProps) => (
-  <section className="rounded-md border border-command-700 bg-command-900/85 p-5 shadow-glow">
-    <div className="flex items-center justify-between gap-4">
-      <div>
-        <p className="text-sm text-slate-400">{title}</p>
-        <p className="mt-2 text-3xl font-semibold text-white">{value}</p>
-      </div>
-      <div className={`flex h-12 w-12 items-center justify-center rounded border bg-command-850 ${toneMap[tone]}`}>
-        <Icon className="h-6 w-6" />
-      </div>
-    </div>
-  </section>
-);
+const DashboardCard = ({ title, value, icon: Icon, tone = "blue", valueClassName = "", compactValue = false }: DashboardCardProps) => {
+  return <MotionCard glowColor={glowForTone(tone)}><StatCard label={title} value={value} icon={Icon} tone={tone} maxValueLines={compactValue ? 2 : 3} valueClassName={valueClassName} /></MotionCard>;
+};
 
 export default DashboardCard;

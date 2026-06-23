@@ -10,6 +10,7 @@ import type {
 import { readJsonOrLocalFallback } from "./localFallback";
 
 const mapApiBase = import.meta.env.VITE_MAP_API_BASE || "/server/map-api";
+type ApiErrorPayload = { message?: string; error?: string; details?: string };
 
 const shouldSend = (value: unknown) => {
   if (value === undefined || value === null) return false;
@@ -29,7 +30,7 @@ const queryString = (filters: MapFilters = {}) => {
 const request = async <T>(path: string, filters?: MapFilters): Promise<T> => {
   const response = await fetch(`${mapApiBase}${path}${queryString(filters)}`);
   if (!response.ok) {
-    const body = await readJsonOrLocalFallback<{ message?: string; error?: string; details?: string }>(response, path).catch(() => ({}));
+    const body: ApiErrorPayload = await readJsonOrLocalFallback<ApiErrorPayload>(response, path).catch(() => ({} as ApiErrorPayload));
     const parts = [body.message, body.error, body.details].filter(Boolean);
     throw new Error(parts.join(" | ") || `Map request failed with status ${response.status}`);
   }

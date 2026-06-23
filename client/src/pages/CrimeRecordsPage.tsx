@@ -2,6 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import { Download, Eye, Loader2, RefreshCw, Search, X } from "lucide-react";
 import DashboardCard from "../components/DashboardCard";
 import StateBlock from "../components/StateBlock";
+import NoDataState from "../components/NoDataState";
+import { useAuth } from "../auth/AuthContext";
+import { getScopeLabel } from "../auth/accessScope";
 import { crimeService } from "../services/crimeService";
 import type { CrimeRecord, CrimeRecordFilterOptions, CrimeRecordQuery, CrimeRecordsPagination } from "../types/crime";
 
@@ -70,19 +73,21 @@ const fieldLabels: Array<[keyof CrimeRecord, string]> = [
   ["created_time", "Created Time"]
 ];
 
-const FilterSelect = ({ label, value, options, onChange }: { label: string; value: string; options: string[]; onChange: (value: string) => void }) => (
+const FilterSelect = ({ label, value, options, onChange, locked = false }: { label: string; value: string; options: string[]; onChange: (value: string) => void; locked?: boolean }) => (
   <label className="block text-xs font-medium uppercase tracking-[0.14em] text-slate-500">
     {label}
     <select
       className="mt-2 min-h-11 w-full rounded-md border border-command-700 bg-command-850 px-3 text-sm normal-case tracking-normal text-white outline-none focus:border-command-300"
       value={value}
       onChange={(event) => onChange(event.target.value)}
+      disabled={locked}
     >
       <option value="All">All</option>
       {options.map((option) => (
         <option key={option} value={option}>{option}</option>
       ))}
     </select>
+    {locked && <span className="mt-1 block normal-case tracking-normal text-[11px] text-command-300">Restricted by your role</span>}
   </label>
 );
 
@@ -96,10 +101,14 @@ const dataQualityNotes = (record: CrimeRecord) => {
 };
 
 const CrimeRecordsPage = () => {
+  const { currentUser, scopeParams } = useAuth();
+  const scopedFilters = { ...allFilters, ...scopeParams };
+  const districtLocked = Boolean(scopeParams.district);
+  const stationLocked = Boolean(scopeParams.police_station);
   const [records, setRecords] = useState<CrimeRecord[]>([]);
   const [options, setOptions] = useState<CrimeRecordFilterOptions>(emptyOptions);
-  const [filters, setFilters] = useState(allFilters);
-  const [appliedFilters, setAppliedFilters] = useState(allFilters);
+  const [filters, setFilters] = useState(scopedFilters);
+  const [appliedFilters, setAppliedFilters] = useState(scopedFilters);
   const [search, setSearch] = useState("");
   const [appliedSearch, setAppliedSearch] = useState("");
   const [pagination, setPagination] = useState<CrimeRecordsPagination>(emptyPagination);
@@ -144,18 +153,24 @@ const CrimeRecordsPage = () => {
   }, []);
 
   useEffect(() => {
+    setFilters(scopedFilters);
+    setAppliedFilters(scopedFilters);
+    setPage(1);
+  }, [currentUser?.id]);
+
+  useEffect(() => {
     loadRecords(query);
   }, [page, limit, appliedFilters, appliedSearch]);
 
   const applyFilters = () => {
     setPage(1);
     setAppliedSearch(search);
-    setAppliedFilters(filters);
+    setAppliedFilters({ ...filters, ...scopeParams });
   };
 
   const clearFilters = () => {
-    setFilters(allFilters);
-    setAppliedFilters(allFilters);
+    setFilters(scopedFilters);
+    setAppliedFilters(scopedFilters);
     setSearch("");
     setAppliedSearch("");
     setPage(1);
@@ -192,7 +207,7 @@ const CrimeRecordsPage = () => {
         <div>
           <p className="text-sm uppercase tracking-[0.18em] text-command-300">Data Store</p>
           <h1 className="text-3xl font-semibold text-white">Crime Records</h1>
-          <p className="mt-2 text-sm text-slate-400">Browse, search, filter, and inspect stored Karnataka crime records.</p>
+          <p className="mt-2 text-sm text-slate-400">Browse, search, filter, and inspect stored Karnataka crime records.</p><p className="mt-2 text-xs font-semibold text-command-300">{getScopeLabel(currentUser)}</p>
         </div>
         <button className="flex min-h-11 items-center justify-center gap-2 rounded-md border border-command-700 bg-command-850 px-4 py-3 text-sm font-semibold text-slate-200 hover:bg-command-800" onClick={exportCsv} type="button">
           <Download className="h-4 w-4" />
@@ -200,7 +215,7 @@ const CrimeRecordsPage = () => {
         </button>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="stat-grid">
         <DashboardCard title="Total Records" value={pagination.totalRecords} icon={Search} />
         <DashboardCard title="Current Page Records" value={records.length} icon={RefreshCw} tone="green" />
         <DashboardCard title="Selected District" value={appliedFilters.district === "All" ? "All" : appliedFilters.district} icon={Search} tone="orange" />
@@ -224,8 +239,8 @@ const CrimeRecordsPage = () => {
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             <FilterSelect label="FIR Year" value={filters.fir_year} options={options.fir_year || options.years} onChange={(value) => setFilters((current) => ({ ...current, fir_year: value }))} />
             <FilterSelect label="FIR Month" value={filters.fir_month} options={options.fir_month || options.months} onChange={(value) => setFilters((current) => ({ ...current, fir_month: value }))} />
-            <FilterSelect label="District" value={filters.district} options={options.district || options.districts} onChange={(value) => setFilters((current) => ({ ...current, district: value }))} />
-            <FilterSelect label="Police Station" value={filters.police_station} options={options.police_station || options.policeStations} onChange={(value) => setFilters((current) => ({ ...current, police_station: value }))} />
+            <FilterSelect label="District" value={filters.district} options={options.district || options.districts} onChange={(value) => setFilters((current) => ({ ...current, district: value }))} locked={districtLocked} />
+            <FilterSelect label="Police Station" value={filters.police_station} options={options.police_station || options.policeStations} onChange={(value) => setFilters((current) => ({ ...current, police_station: value }))} locked={stationLocked} />
             <FilterSelect label="Crime Type" value={filters.crime_type} options={options.crime_type || options.crimeTypes} onChange={(value) => setFilters((current) => ({ ...current, crime_type: value }))} />
             <FilterSelect label="Severity" value={filters.severity} options={options.severity || options.severities} onChange={(value) => setFilters((current) => ({ ...current, severity: value }))} />
             <FilterSelect label="FIR Stage" value={filters.fir_stage} options={options.fir_stage || options.statuses} onChange={(value) => setFilters((current) => ({ ...current, fir_stage: value }))} />
@@ -249,11 +264,11 @@ const CrimeRecordsPage = () => {
       )}
 
       {!error && records.length === 0 ? (
-        <StateBlock title="No crime records found" message="No crime records found. Upload CSV data first." />
+        <NoDataState currentUser={currentUser} moduleName="Crime Records" />
       ) : (
         <section className="overflow-hidden rounded-md border border-command-700 bg-command-900/85 shadow-glow">
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-left text-sm">
+          <div className="table-scroll">
+            <table className="data-table min-w-full text-left text-sm">
               <thead className="sticky top-0 bg-command-850 text-xs uppercase text-slate-400">
                 <tr>
                   {["Crime ID", "District", "Police Station", "Crime Type", "Crime Head", "Severity", "FIR Year", "FIR Month", "FIR Day", "Crime Date", "FIR Stage", "Complaint Mode", "Actions"].map((header) => (

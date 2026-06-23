@@ -166,7 +166,7 @@ const CrimeForecast = () => {
       </div>
 
       <section className="rounded-md border border-command-700 bg-command-900/85 p-5 shadow-glow">
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+        <div className="stat-grid">
           <DashboardCard title="Overall Risk" value={summary.overall_risk_level || summary.today_overall_risk} icon={CloudSun} tone={(summary.overall_risk_level || summary.today_overall_risk) === "Critical" || (summary.overall_risk_level || summary.today_overall_risk) === "High" ? "red" : "green"} />
           <DashboardCard title="Highest Risk District" value={summary.highest_risk_district} icon={Target} tone="orange" />
           <DashboardCard title="Highest Risk Crime" value={summary.highest_risk_crime_type || summary.expected_concern} icon={ShieldAlert} />

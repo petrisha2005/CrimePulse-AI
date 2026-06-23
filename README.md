@@ -69,7 +69,7 @@ catalyst login
 Initialize from the project folder:
 
 ```bash
-cd crimepulse-ai
+cd kavach-analytics
 catalyst init
 ```
 
@@ -103,7 +103,7 @@ VITE_AI_API_BASE=/server/ai-api
 Configure Catalyst Function environment variables:
 
 ```text
-CRIME_TABLE=CrimeRecords
+CRIME_RECORDS_TABLE=CrimeRecords
 GEMINI_API_KEY=your_gemini_api_key
 ```
 
@@ -115,9 +115,10 @@ Create `CrimeRecords` in Zoho Catalyst Data Store with:
 
 ```text
 crime_id, district, police_station, crime_type, crime_subtype, severity,
-severity_original, year, month, day, date, latitude, longitude, location,
-beat_name, village_area, status, complaint_mode, act_section, victim_count,
-accused_count, arrested_count, conviction_count, unit_id, created_at
+severity_original, fir_year, fir_month, fir_day, crime_date, latitude_value, longitude_value,
+offence_location, beat_name, village_area_name, fir_stage, complaint_mode,
+act_section, victim_count, accused_count, arrested_count, conviction_count,
+unit_id, created_time
 ```
 
 Create `AIInsights` with:
@@ -136,14 +137,16 @@ pdf_file_id_or_path
 
 ## Demo Login
 
-Temporary hackathon demo credentials:
+Hackathon-only demo roles:
 
 ```text
-Email: officer@crimepulse.gov.in
-Password: CrimePulse@123
+Super Admin: admin@crimepulse.ai / Admin@123
+District Command Officer: district@crimepulse.ai / District@123
+Police Station Officer: station@crimepulse.ai / Station@123
+Crime Analyst: analyst@crimepulse.ai / Analyst@123
 ```
 
-Remove demo login before production deployment and use only Catalyst Authentication users.
+These local credentials are for the demo flow only. Replace them with Catalyst Authentication role claims before production deployment.
 
 ## Install Dependencies
 

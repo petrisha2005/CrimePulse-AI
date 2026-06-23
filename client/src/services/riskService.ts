@@ -15,6 +15,7 @@ import type {
 import { readJsonOrLocalFallback } from "./localFallback";
 
 const riskApiBase = import.meta.env.VITE_RISK_API_BASE || "/server/risk-api";
+type ApiErrorPayload = { message?: string; error?: string; details?: string; path?: string };
 
 type RiskFilters = Pick<DashboardFilters, "year" | "month" | "fir_year" | "fir_month" | "crime_type" | "severity" | "fir_stage" | "status">;
 
@@ -36,7 +37,7 @@ const queryString = (filters: RiskFilters = {}) => {
 const request = async <T>(path: string, filters?: RiskFilters): Promise<T> => {
   const response = await fetch(`${riskApiBase}${path}${queryString(filters)}`);
   if (!response.ok) {
-    const body = await readJsonOrLocalFallback<{ message?: string; error?: string; details?: string; path?: string }>(response, path).catch(() => ({} as { message?: string }));
+    const body: ApiErrorPayload = await readJsonOrLocalFallback<ApiErrorPayload>(response, path).catch(() => ({} as ApiErrorPayload));
     const detail = [body.message, body.error, body.details].filter(Boolean).join(" | ");
     throw new Error(`Endpoint failed: ${body.path || path}. ${detail || `Risk request failed with status ${response.status}`}`);
   }

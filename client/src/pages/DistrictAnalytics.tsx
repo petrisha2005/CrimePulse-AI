@@ -174,7 +174,7 @@ const DistrictAnalytics = () => {
         </button>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
+      <div className="stat-grid">
         <DashboardCard title="Total Districts" value={summary.total_districts} icon={MapPinned} />
         <DashboardCard title="Total Records" value={summary.total_records} icon={Database} />
         <DashboardCard title="Highest Crime District" value={summary.highest_crime_district} icon={TrendingUp} tone="red" />

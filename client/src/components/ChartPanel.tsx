@@ -15,19 +15,29 @@ import {
 import type { ReactNode } from "react";
 import type { ChartDatum, MonthlyTrend, YearlyTrend } from "../types/crime";
 import StateBlock from "./StateBlock";
+import { MotionSection } from "./animation";
 
 const palette = ["#2e8bd8", "#ef4444", "#f97316", "#22c55e", "#facc15", "#83c5ff"];
+const compactLabel = (value: unknown) => {
+  const label = String(value ?? "");
+  return label.length > 16 ? `${label.slice(0, 15)}...` : label;
+};
 
 interface PanelProps {
   title: string;
   children: ReactNode;
 }
 
+const tooltipStyle = { background: "#1E293B", border: "1px solid rgba(0,245,255,0.2)", borderRadius: "6px", color: "#E2E8F0", fontSize: "12px" };
+const axisTick = { fill: "#64748B", fontSize: 11 };
+
 const Panel = ({ title, children }: PanelProps) => (
-  <section className="rounded-md border border-command-700 bg-command-900/85 p-5 shadow-glow">
-    <h2 className="text-base font-semibold text-white">{title}</h2>
-    <div className="mt-4 h-72">{children}</div>
+  <MotionSection className="chart-motion-section">
+  <section className="card-safe rounded-md border border-command-700 bg-command-900/85 p-5 shadow-glow">
+    <h2 className="text-safe truncate-2 text-base font-semibold text-white" title={title}>{title}</h2>
+    <div className="chart-safe mt-4 h-72">{children}</div>
   </section>
+  </MotionSection>
 );
 
 export const DistributionPieChart = ({ title, data }: { title: string; data: ChartDatum[] }) => (
@@ -42,7 +52,7 @@ export const DistributionPieChart = ({ title, data }: { title: string; data: Cha
               <Cell key={entry.name} fill={palette[index % palette.length]} />
             ))}
           </Pie>
-          <Tooltip contentStyle={{ background: "#0a1728", border: "1px solid #1e3a55", color: "#fff" }} />
+          <Tooltip contentStyle={tooltipStyle} />
         </PieChart>
       </ResponsiveContainer>
     )}
@@ -56,10 +66,10 @@ export const RankingBarChart = ({ title, data, color = "#2e8bd8" }: { title: str
     ) : (
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={data}>
-          <CartesianGrid stroke="#1e3a55" strokeDasharray="3 3" />
-          <XAxis dataKey="name" stroke="#94a3b8" />
-          <YAxis allowDecimals={false} stroke="#94a3b8" />
-          <Tooltip contentStyle={{ background: "#0a1728", border: "1px solid #1e3a55", color: "#fff" }} />
+          <CartesianGrid stroke="rgba(255,255,255,0.05)" strokeDasharray="3 3" />
+          <XAxis dataKey="name" tick={axisTick} tickFormatter={compactLabel} interval="preserveStartEnd" />
+          <YAxis allowDecimals={false} tick={axisTick} />
+          <Tooltip contentStyle={tooltipStyle} />
           <Bar dataKey="value" fill={color} radius={[4, 4, 0, 0]} />
         </BarChart>
       </ResponsiveContainer>
@@ -79,7 +89,7 @@ export const CrimeTypePieChart = ({ data }: { data: ChartDatum[] }) => (
               <Cell key={entry.name} fill={palette[index % palette.length]} />
             ))}
           </Pie>
-          <Tooltip contentStyle={{ background: "#0a1728", border: "1px solid #1e3a55", color: "#fff" }} />
+          <Tooltip contentStyle={tooltipStyle} />
         </PieChart>
       </ResponsiveContainer>
     )}
@@ -93,10 +103,10 @@ export const MonthlyTrendChart = ({ data }: { data: MonthlyTrend[] }) => (
     ) : (
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={data}>
-          <CartesianGrid stroke="#1e3a55" strokeDasharray="3 3" />
-          <XAxis dataKey="month" stroke="#94a3b8" />
-          <YAxis allowDecimals={false} stroke="#94a3b8" />
-          <Tooltip contentStyle={{ background: "#0a1728", border: "1px solid #1e3a55", color: "#fff" }} />
+          <CartesianGrid stroke="rgba(255,255,255,0.05)" strokeDasharray="3 3" />
+          <XAxis dataKey="month" tick={axisTick} tickFormatter={compactLabel} interval="preserveStartEnd" />
+          <YAxis allowDecimals={false} tick={axisTick} />
+          <Tooltip contentStyle={tooltipStyle} />
           <Line type="monotone" dataKey="crimes" stroke="#83c5ff" strokeWidth={3} dot={{ r: 4 }} />
         </LineChart>
       </ResponsiveContainer>
@@ -111,10 +121,10 @@ export const YearlyTrendChart = ({ data }: { data: YearlyTrend[] }) => (
     ) : (
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={data}>
-          <CartesianGrid stroke="#1e3a55" strokeDasharray="3 3" />
-          <XAxis dataKey="year" stroke="#94a3b8" />
-          <YAxis allowDecimals={false} stroke="#94a3b8" />
-          <Tooltip contentStyle={{ background: "#0a1728", border: "1px solid #1e3a55", color: "#fff" }} />
+          <CartesianGrid stroke="rgba(255,255,255,0.05)" strokeDasharray="3 3" />
+          <XAxis dataKey="year" tick={axisTick} tickFormatter={compactLabel} interval="preserveStartEnd" />
+          <YAxis allowDecimals={false} tick={axisTick} />
+          <Tooltip contentStyle={tooltipStyle} />
           <Line type="monotone" dataKey="crimes" stroke="#22c55e" strokeWidth={3} dot={{ r: 4 }} />
         </LineChart>
       </ResponsiveContainer>
@@ -129,10 +139,10 @@ export const DistrictRankingChart = ({ data }: { data: ChartDatum[] }) => (
     ) : (
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={data}>
-          <CartesianGrid stroke="#1e3a55" strokeDasharray="3 3" />
-          <XAxis dataKey="name" stroke="#94a3b8" />
-          <YAxis allowDecimals={false} stroke="#94a3b8" />
-          <Tooltip contentStyle={{ background: "#0a1728", border: "1px solid #1e3a55", color: "#fff" }} />
+          <CartesianGrid stroke="rgba(255,255,255,0.05)" strokeDasharray="3 3" />
+          <XAxis dataKey="name" tick={axisTick} tickFormatter={compactLabel} interval="preserveStartEnd" />
+          <YAxis allowDecimals={false} tick={axisTick} />
+          <Tooltip contentStyle={tooltipStyle} />
           <Bar dataKey="value" fill="#2e8bd8" radius={[4, 4, 0, 0]} />
         </BarChart>
       </ResponsiveContainer>
@@ -147,10 +157,10 @@ export const FirStageChart = ({ data }: { data: ChartDatum[] }) => (
     ) : (
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={data}>
-          <CartesianGrid stroke="#1e3a55" strokeDasharray="3 3" />
-          <XAxis dataKey="name" stroke="#94a3b8" />
-          <YAxis allowDecimals={false} stroke="#94a3b8" />
-          <Tooltip contentStyle={{ background: "#0a1728", border: "1px solid #1e3a55", color: "#fff" }} />
+          <CartesianGrid stroke="rgba(255,255,255,0.05)" strokeDasharray="3 3" />
+          <XAxis dataKey="name" tick={axisTick} tickFormatter={compactLabel} interval="preserveStartEnd" />
+          <YAxis allowDecimals={false} tick={axisTick} />
+          <Tooltip contentStyle={tooltipStyle} />
           <Bar dataKey="value" fill="#f97316" radius={[4, 4, 0, 0]} />
         </BarChart>
       </ResponsiveContainer>

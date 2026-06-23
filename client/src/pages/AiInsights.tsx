@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Bot, BrainCircuit, FileWarning, Loader2, MessageSquareText, RefreshCw, Search, ShieldAlert, Sparkles, Target, TrendingUp } from "lucide-react";
 import DashboardCard from "../components/DashboardCard";
 import StateBlock from "../components/StateBlock";
+import { MotionCard, MotionSection, useInView } from "../components/animation";
 import { aiService } from "../services/aiService";
 import { crimeService } from "../services/crimeService";
 import type { AiAskResponse, AiGeneratedInsight, AiInsightFilterOptions, AiInsightFilters, AiRecommendation, AiSummary } from "../types/crime";
@@ -61,8 +62,15 @@ const SelectFilter = ({ label, value, options, onChange }: { label: string; valu
   </label>
 );
 
+const Typewriter = ({ text }: { text: string }) => {
+  const [ref, visible] = useInView();
+  const [shown, setShown] = useState("");
+  useEffect(() => { if (!visible) return; let frame = 0; const start = performance.now(); const tick = (now: number) => { const amount = Math.min(text.length, Math.floor((now - start) / 600 * text.length)); setShown(text.slice(0, amount)); if (amount < text.length) frame = requestAnimationFrame(tick); }; frame = requestAnimationFrame(tick); return () => cancelAnimationFrame(frame); }, [text, visible]);
+  return <p ref={ref} className="mt-4 text-sm leading-6 text-slate-300">{shown}</p>;
+};
+
 const InsightCard = ({ insight }: { insight: AiGeneratedInsight }) => (
-  <article className={`rounded-md border bg-command-900/85 p-5 shadow-glow ${riskClass(insight.priority)}`}>
+  <MotionCard glowColor="purple"><article className={`rounded-md border bg-command-900/85 p-5 shadow-glow ${riskClass(insight.priority)}`}>
     <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
       <div>
         <p className="text-xs uppercase tracking-[0.16em] opacity-80">{insight.type}</p>
@@ -70,7 +78,7 @@ const InsightCard = ({ insight }: { insight: AiGeneratedInsight }) => (
       </div>
       <span className="rounded border border-current/40 px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em]">{insight.priority}</span>
     </div>
-    <p className="mt-4 text-sm leading-6 text-slate-300">{insight.explanation}</p>
+    <Typewriter text={insight.explanation} />
     <div className="mt-4">
       <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Evidence</p>
       <ul className="mt-2 space-y-2 text-sm text-slate-300">
@@ -81,7 +89,7 @@ const InsightCard = ({ insight }: { insight: AiGeneratedInsight }) => (
       {insight.recommendation}
     </div>
     <p className="mt-3 text-xs text-slate-500">Confidence: {insight.confidence}%</p>
-  </article>
+  </article></MotionCard>
 );
 
 const AiInsights = () => {
@@ -199,8 +207,8 @@ const AiInsights = () => {
               <p className="text-sm text-slate-400">{storedCount.toLocaleString()} stored records available. {hasFilters ? "Filtered intelligence active." : "Showing all records."}</p>
             </div>
           </div>
-          <div className="rounded border border-alert-medium/30 bg-alert-medium/10 px-3 py-2 text-xs text-alert-medium">
-            If Gemini is not configured, CrimePulse AI uses explainable rule-based analysis.
+          <div className="rounded border border-command-300/30 bg-command-500/10 px-3 py-2 font-mono text-[10px] tracking-[0.12em] text-command-300">
+            {summary?.ai_mode === "Gemini" ? "GEMINI AI" : "RULE ENGINE"}
           </div>
         </div>
       </section>
@@ -262,7 +270,7 @@ const AiInsights = () => {
             </div>
           </section>
 
-          <section className="rounded-md border border-command-700 bg-command-900/85 p-5 shadow-glow">
+          <MotionSection><section className="rounded-md border border-command-700 bg-command-900/85 p-5 shadow-glow">
             <h2 className="text-base font-semibold text-white">Generated Insight Cards</h2>
             {insights.length === 0 ? (
               <p className="mt-4 text-sm text-slate-400">No AI insights found for the selected filters.</p>
@@ -271,7 +279,7 @@ const AiInsights = () => {
                 {insights.map((insight) => <InsightCard key={insight.insight_id} insight={insight} />)}
               </div>
             )}
-          </section>
+          </section></MotionSection>
 
           <section className="grid gap-4 lg:grid-cols-2">
             <div className="rounded-md border border-command-700 bg-command-900/85 p-5 shadow-glow">
@@ -284,6 +292,7 @@ const AiInsights = () => {
                 {asking ? <Loader2 className="h-4 w-4 animate-spin" /> : <Bot className="h-4 w-4" />}
                 {asking ? "Analyzing..." : "Ask AI"}
               </button>
+              {asking && <p className="mt-3 flex items-center gap-2 text-xs italic text-slate-400"><span className="ai-thinking-dots"><i/><i/><i/></span>AI is analyzing patterns...</p>}
               {answer && (
                 <div className="mt-4 rounded border border-command-700 bg-command-950/70 p-4 text-sm leading-6 text-slate-200">
                   <p className="text-xs uppercase tracking-[0.14em] text-command-300">{answer.ai_mode} answer from {answer.records_analyzed.toLocaleString()} records</p>

@@ -2,6 +2,7 @@ import type { ApiResponse, CrimeForecast, CrimeTypeForecast, ForecastFilterOptio
 import { readJsonOrLocalFallback } from "./localFallback";
 
 const forecastApiBase = import.meta.env.VITE_FORECAST_API_BASE || "/server/forecast-api";
+type ApiErrorPayload = { message?: string; error?: string; details?: string };
 
 const shouldSend = (value: unknown) => {
   if (value === undefined || value === null) return false;
@@ -21,7 +22,7 @@ const queryString = (filters: ForecastFilters = {}) => {
 const request = async <T>(path: string, filters?: ForecastFilters): Promise<T> => {
   const response = await fetch(`${forecastApiBase}${path}${queryString(filters)}`);
   if (!response.ok) {
-    const body = await readJsonOrLocalFallback<{ message?: string; error?: string; details?: string }>(response, path).catch(() => ({}));
+    const body: ApiErrorPayload = await readJsonOrLocalFallback<ApiErrorPayload>(response, path).catch(() => ({} as ApiErrorPayload));
     const parts = [body.message, body.error, body.details].filter(Boolean);
     throw new Error(parts.join(" | ") || `Forecast request failed with status ${response.status}`);
   }

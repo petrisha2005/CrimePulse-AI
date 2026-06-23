@@ -259,7 +259,7 @@ const DistrictRiskDna = () => {
                   {dna.risk_level} Risk
                 </span>
               </div>
-              <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              <div className="stat-grid mt-5">
                 <DashboardCard title="Dominant Crime Type" value={dna.dominant_crime_type} icon={ShieldAlert} tone="orange" />
                 <DashboardCard title="Dominant Crime Head" value={dna.dominant_crime_head} icon={ShieldAlert} />
                 <DashboardCard title="Total Crimes" value={dna.total_crimes} icon={AlertTriangle} tone="red" />
@@ -282,7 +282,7 @@ const DistrictRiskDna = () => {
 
           <section className="rounded-md border border-command-700 bg-command-900/85 p-5 shadow-glow">
             <h2 className="text-base font-semibold text-white">Crime DNA Profile</h2>
-            <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="stat-grid mt-4">
               <DashboardCard title="Victim Count" value={dna.victim_count} icon={AlertTriangle} tone="orange" />
               <DashboardCard title="Accused Count" value={dna.accused_count} icon={ShieldAlert} tone="red" />
               <DashboardCard title="Arrested Count" value={dna.arrested_count} icon={CheckCircle2} />

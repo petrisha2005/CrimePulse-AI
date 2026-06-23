@@ -1,12 +1,14 @@
 interface StateBlockProps {
   title: string;
   message: string;
+  onRetry?: () => void;
 }
 
-const StateBlock = ({ title, message }: StateBlockProps) => (
+const StateBlock = ({ title, message, onRetry }: StateBlockProps) => (
   <div className="rounded-md border border-command-700 bg-command-900/80 p-6 text-center">
     <p className="font-medium text-white">{title}</p>
     <p className="mt-2 text-sm text-slate-400">{message}</p>
+    {onRetry && <button className="mt-4 min-h-10 border border-command-700 px-4 text-sm font-semibold text-command-300 hover:bg-command-850" onClick={onRetry} type="button">Retry</button>}
   </div>
 );
 

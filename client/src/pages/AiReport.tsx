@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { Download, Eye, FileText, Loader2, Printer, RefreshCw, Search, ShieldCheck, Target } from "lucide-react";
 import StateBlock from "../components/StateBlock";
+import { MotionButton, MotionSection } from "../components/animation";
+import { useAuth } from "../auth/AuthContext";
 import { crimeService } from "../services/crimeService";
-import { dashboardService } from "../services/dashboardService";
-import { reportService } from "../services/reportService";
+import { reportService, type ReportSummary } from "../services/reportService";
 import type { DashboardFilterOptions, GeneratedReportResponse, ReportFilters, ReportRequest } from "../types/crime";
 
 const reportTypes = [
@@ -26,7 +27,9 @@ const sectionOptions = [
   "Recommended Police Actions"
 ];
 
-const allFilters: ReportFilters = {
+const DEFAULT_REPORT_TYPE = "full-intelligence-report";
+
+const DEFAULT_REPORT_FILTERS: ReportFilters = {
   fir_year: "All",
   fir_month: "All",
   district: "All",
@@ -35,6 +38,8 @@ const allFilters: ReportFilters = {
   severity: "All",
   fir_stage: "All"
 };
+
+const DEFAULT_REPORT_SECTIONS = [...sectionOptions];
 
 const emptyOptions: DashboardFilterOptions = {
   years: [],
@@ -52,10 +57,10 @@ const cleanFilters = (filters: ReportFilters) =>
 const getCount = (body: { totalRecords?: number; data?: { totalRecords?: number } }) =>
   body.totalRecords ?? body.data?.totalRecords ?? 0;
 
-const SelectFilter = ({ label, value, options, onChange }: { label: string; value?: string; options: string[]; onChange: (value: string) => void }) => (
+const SelectFilter = ({ label, value, options, onChange, locked = false }: { label: string; value?: string; options: string[]; onChange: (value: string) => void; locked?: boolean }) => (
   <label className="block text-xs font-medium uppercase tracking-[0.14em] text-slate-500">
-    {label}
-    <select className="mt-2 min-h-11 w-full rounded-md border border-command-700 bg-command-850 px-3 text-sm normal-case tracking-normal text-white outline-none focus:border-command-300" value={value || "All"} onChange={(event) => onChange(event.target.value)}>
+    <span className="flex items-center gap-2">{label}{locked && <span className="normal-case tracking-normal text-command-300">Locked by role</span>}</span>
+    <select aria-label={label} className="mt-2 min-h-11 w-full rounded-md border border-command-700 bg-command-850 px-3 text-sm normal-case tracking-normal text-white outline-none focus:border-command-300 disabled:cursor-not-allowed disabled:opacity-70" disabled={locked} value={value || "All"} onChange={(event) => onChange(event.target.value)}>
       <option value="All">All</option>
       {options.map((option) => <option key={option} value={option}>{option}</option>)}
     </select>
@@ -82,41 +87,57 @@ const printReport = (report: GeneratedReportResponse) => {
 };
 
 const AiReport = () => {
+  const { scopeParams } = useAuth();
   const [filterOptions, setFilterOptions] = useState<DashboardFilterOptions>(emptyOptions);
   const [request, setRequest] = useState<ReportRequest>({
-    report_type: "full-intelligence-report",
+    report_type: DEFAULT_REPORT_TYPE,
     report_title: "",
-    filters: allFilters,
-    sections: sectionOptions
+    filters: { ...DEFAULT_REPORT_FILTERS },
+    sections: [...DEFAULT_REPORT_SECTIONS]
   });
   const [report, setReport] = useState<GeneratedReportResponse | null>(null);
+  const [reportSummary, setReportSummary] = useState<ReportSummary | null>(null);
   const [storedCount, setStoredCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   const [error, setError] = useState("");
+  const [apiError, setApiError] = useState("");
 
   const activeFilters = useMemo(() => cleanFilters(request.filters), [request.filters]);
   const hasFilters = Object.keys(activeFilters).length > 0;
+  const districtLocked = Boolean(scopeParams.district);
+  const policeStationLocked = Boolean(scopeParams.police_station);
 
   const loadMeta = async () => {
+    setApiError("");
     try {
-      const [countResponse, filtersResponse] = await Promise.all([
-        crimeService.getCrimeCount(),
-        dashboardService.getFilters()
-      ]);
+      const countResponse = await crimeService.getCrimeCount();
       setStoredCount(getCount(countResponse));
-      setFilterOptions({ ...emptyOptions, ...filtersResponse.data });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to load report metadata.");
+      setApiError(err instanceof Error ? err.message : "Crime count API failed.");
     }
+
+    const [summaryResult, filtersResult] = await Promise.allSettled([reportService.getSummary(), reportService.getFilters()]);
+    if (summaryResult.status === "fulfilled") setReportSummary(summaryResult.value);
+    if (filtersResult.status === "fulfilled") setFilterOptions({ ...emptyOptions, ...filtersResult.value });
+    const failed = [summaryResult, filtersResult].find((result) => result.status === "rejected");
+    if (failed?.status === "rejected") setApiError(failed.reason instanceof Error ? failed.reason.message : "Report API metadata failed.");
   };
 
   useEffect(() => {
     loadMeta();
   }, []);
 
+  useEffect(() => {
+    setRequest((current) => ({
+      ...current,
+      filters: { ...current.filters, ...scopeParams }
+    }));
+  }, [scopeParams.district, scopeParams.police_station]);
+
   const updateFilter = (key: keyof ReportFilters, value: string) => {
-    setRequest((current) => ({ ...current, filters: { ...current.filters, [key]: value } }));
+    if ((key === "district" && districtLocked) || (key === "police_station" && policeStationLocked)) return;
+    setRequest((current) => ({ ...current, filters: { ...current.filters, [key]: value, ...scopeParams } }));
   };
 
   const toggleSection = (section: string) => {
@@ -130,19 +151,14 @@ const AiReport = () => {
 
   const buildPayload = (): ReportRequest => ({
     ...request,
-    filters: activeFilters
+    filters: cleanFilters({ ...request.filters, ...scopeParams })
   });
 
   const handlePreview = async () => {
     try {
       setPreviewing(true);
       setError("");
-      const response = await reportService.preview(buildPayload());
-      if (!response.data) {
-        setError("No crime records found for the selected report filters.");
-        return;
-      }
-      setReport(response.data);
+      setReport(await reportService.preview(buildPayload()));
     } catch (err) {
       const message = err instanceof Error ? err.message : "Report preview failed.";
       setError(storedCount > 0 ? `${storedCount.toLocaleString()} records found, but report module failed. ${message}` : message);
@@ -155,12 +171,7 @@ const AiReport = () => {
     try {
       setLoading(true);
       setError("");
-      const response = await reportService.generate(buildPayload());
-      if (!response.data) {
-        setError("No crime records found for the selected report filters.");
-        return;
-      }
-      setReport(response.data);
+      setReport(await reportService.generate(buildPayload()));
     } catch (err) {
       const message = err instanceof Error ? err.message : "Report generation failed.";
       setError(storedCount > 0 ? `${storedCount.toLocaleString()} records found, but report module failed. ${message}` : message);
@@ -169,8 +180,19 @@ const AiReport = () => {
     }
   };
 
-  const clearFilters = () => {
-    setRequest((current) => ({ ...current, filters: allFilters }));
+  const handleClearFilters = () => {
+    setRequest({
+      report_type: DEFAULT_REPORT_TYPE,
+      report_title: "",
+      filters: { ...DEFAULT_REPORT_FILTERS, ...scopeParams },
+      sections: [...DEFAULT_REPORT_SECTIONS]
+    });
+    setReport(null);
+    setError("");
+    setApiError("");
+    setLoading(false);
+    setPreviewing(false);
+    void loadMeta();
   };
 
   return (
@@ -199,10 +221,12 @@ const AiReport = () => {
             </div>
           </div>
           <div className="rounded border border-command-300/30 bg-command-500/10 px-3 py-2 text-xs text-command-300">
-            Output includes HTML, Markdown, and browser Print / Save as PDF.
+            {reportSummary?.ai_mode === "Gemini" ? "Gemini-enhanced report generation active." : "Rule-based report generation active. Gemini is optional."}
           </div>
         </div>
       </section>
+
+      {apiError && <div className="rounded border border-alert-high/40 bg-command-900 p-4 text-sm text-alert-high">{storedCount > 0 ? `${storedCount.toLocaleString()} records found, but report API failed.` : "Report API failed."} Details: {apiError}</div>}
 
       <section className="rounded-md border border-command-700 bg-command-900/85 p-5 shadow-glow">
         <h2 className="text-base font-semibold text-white">Report Builder</h2>
@@ -219,8 +243,8 @@ const AiReport = () => {
           </label>
           <SelectFilter label="FIR Year" value={request.filters.fir_year} options={filterOptions.years} onChange={(value) => updateFilter("fir_year", value)} />
           <SelectFilter label="FIR Month" value={request.filters.fir_month} options={filterOptions.months} onChange={(value) => updateFilter("fir_month", value)} />
-          <SelectFilter label="District" value={request.filters.district} options={filterOptions.districts} onChange={(value) => updateFilter("district", value)} />
-          <SelectFilter label="Police Station" value={request.filters.police_station} options={filterOptions.policeStations} onChange={(value) => updateFilter("police_station", value)} />
+          <SelectFilter label="District" value={request.filters.district} options={filterOptions.districts} locked={districtLocked} onChange={(value) => updateFilter("district", value)} />
+          <SelectFilter label="Police Station" value={request.filters.police_station} options={filterOptions.policeStations} locked={policeStationLocked} onChange={(value) => updateFilter("police_station", value)} />
           <SelectFilter label="Crime Type" value={request.filters.crime_type} options={filterOptions.crimeTypes} onChange={(value) => updateFilter("crime_type", value)} />
           <SelectFilter label="Severity" value={request.filters.severity} options={filterOptions.severities} onChange={(value) => updateFilter("severity", value)} />
           <SelectFilter label="FIR Stage" value={request.filters.fir_stage} options={filterOptions.statuses} onChange={(value) => updateFilter("fir_stage", value)} />
@@ -239,7 +263,7 @@ const AiReport = () => {
         </div>
 
         <div className="mt-5 flex flex-wrap gap-3">
-          <button className="flex min-h-11 items-center gap-2 rounded-md border border-command-700 bg-command-850 px-4 py-3 text-sm font-semibold text-slate-200 hover:bg-command-800" onClick={clearFilters} type="button">
+          <button className="flex min-h-11 items-center gap-2 rounded-md border border-command-700 bg-command-850 px-4 py-3 text-sm font-semibold text-slate-200 hover:bg-command-800" onClick={handleClearFilters} type="button">
             <Target className="h-4 w-4" />
             Clear Filters
           </button>
@@ -247,10 +271,7 @@ const AiReport = () => {
             {previewing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />}
             {previewing ? "Building Preview..." : "Preview Report"}
           </button>
-          <button className="flex min-h-11 items-center gap-2 rounded-md bg-command-500 px-4 py-3 text-sm font-semibold text-white hover:bg-command-300 hover:text-command-950 disabled:opacity-60" disabled={loading || previewing} onClick={handleGenerate} type="button">
-            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-            {loading ? "Generating..." : "Generate Report"}
-          </button>
+          <MotionButton disabled={loading || previewing} onClick={handleGenerate}>{loading ? <span className="report-generating">GENERATING<span><i/> <i/> <i/></span></span> : <><Search className="h-4 w-4" />Generate Report</>}</MotionButton>
         </div>
       </section>
 
@@ -262,7 +283,7 @@ const AiReport = () => {
 
       {report && (
         <>
-          <section className="rounded-md border border-command-700 bg-command-900/85 p-5 shadow-glow">
+          <MotionSection><section className="rounded-md border border-command-700 bg-command-900/85 p-5 shadow-glow report-reveal-section">
             <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
               <div>
                 <p className="text-sm uppercase tracking-[0.18em] text-command-300">Generated Intelligence Report</p>
@@ -270,10 +291,7 @@ const AiReport = () => {
                 <p className="mt-1 text-sm text-slate-400">Generated {new Date(report.generated_at).toLocaleString()} from {report.records_analyzed.toLocaleString()} records</p>
               </div>
               <div className="flex flex-wrap gap-2">
-                <button className="flex min-h-10 items-center gap-2 rounded-md border border-command-700 bg-command-850 px-3 text-sm font-semibold text-slate-200 hover:bg-command-800" onClick={() => downloadText(`${report.report_id}.html`, report.html, "text/html")} type="button">
-                  <Download className="h-4 w-4" />
-                  HTML
-                </button>
+                <MotionButton variant="ghost" onClick={() => downloadText(`${report.report_id}.html`, report.html, "text/html")}><Download className="h-4 w-4" />HTML</MotionButton>
                 <button className="flex min-h-10 items-center gap-2 rounded-md border border-command-700 bg-command-850 px-3 text-sm font-semibold text-slate-200 hover:bg-command-800" onClick={() => downloadText(`${report.report_id}.md`, report.markdown, "text/markdown")} type="button">
                   <Download className="h-4 w-4" />
                   Markdown
@@ -284,10 +302,10 @@ const AiReport = () => {
                 </button>
               </div>
             </div>
-          </section>
+          </section></MotionSection>
 
-          <section className="grid gap-4 lg:grid-cols-2">
-            <div className="rounded-md border border-command-700 bg-command-900/85 p-5 shadow-glow">
+          <MotionSection delay={200}><section className="grid gap-4 lg:grid-cols-2">
+            <div className="rounded-md border border-command-700 bg-command-900/85 p-5 shadow-glow report-reveal-section">
               <div className="flex items-center gap-2">
                 <ShieldCheck className="h-5 w-5 text-command-300" />
                 <h2 className="text-base font-semibold text-white">Key Findings</h2>
@@ -296,20 +314,20 @@ const AiReport = () => {
                 {report.key_findings.map((item) => <li key={item}>- {item}</li>)}
               </ul>
             </div>
-            <div className="rounded-md border border-command-700 bg-command-900/85 p-5 shadow-glow">
+            <div className="rounded-md border border-command-700 bg-command-900/85 p-5 shadow-glow report-reveal-section">
               <h2 className="text-base font-semibold text-white">Recommendations</h2>
               <ul className="mt-4 space-y-2 text-sm text-command-300">
                 {report.recommendations.map((item) => <li key={item}>- {item}</li>)}
               </ul>
             </div>
-          </section>
+          </section></MotionSection>
 
-          <section className="rounded-md border border-command-700 bg-command-900/85 p-5 shadow-glow">
+          <MotionSection delay={400}><section className="rounded-md border border-command-700 bg-command-900/85 p-5 shadow-glow report-reveal-section">
             <h2 className="text-base font-semibold text-white">White Paper Preview</h2>
             <div className="mt-4 max-h-[760px] overflow-auto rounded-md border border-slate-200 bg-white p-6 text-slate-950 shadow-xl">
               <div className="prose prose-slate max-w-none" dangerouslySetInnerHTML={{ __html: report.html }} />
             </div>
-          </section>
+          </section></MotionSection>
         </>
       )}
     </div>

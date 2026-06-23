@@ -10,6 +10,7 @@ import type {
 import { readJsonOrLocalFallback } from "./localFallback";
 
 const aiApiBase = import.meta.env.VITE_AI_API_BASE || "/server/ai-api";
+type ApiErrorPayload = { message?: string; error?: string; details?: string };
 
 const shouldSend = (value: unknown) => {
   if (value === undefined || value === null) return false;
@@ -33,7 +34,7 @@ const request = async <T>(path: string, options?: RequestInit): Promise<T> => {
   });
 
   if (!response.ok) {
-    const body = await readJsonOrLocalFallback<{ message?: string; error?: string; details?: string }>(response, path).catch(() => ({}));
+    const body: ApiErrorPayload = await readJsonOrLocalFallback<ApiErrorPayload>(response, path).catch(() => ({} as ApiErrorPayload));
     const message = [body.message, body.error, body.details].filter(Boolean).join(" | ");
     throw new Error(message || `AI request failed with status ${response.status}`);
   }

@@ -160,7 +160,7 @@ const SocioEconomicInsights = () => {
         These insights use crime-derived proxy indicators. External socio-economic datasets can be connected later for deeper correlation.
       </section>
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
+      <div className="stat-grid">
         <DashboardCard title="Records Analyzed" value={summary.total_records_analyzed || 0} icon={Database} />
         <DashboardCard title="Districts Analyzed" value={summary.total_districts || summary.districts_analyzed} icon={Users} />
         <DashboardCard title="Highest Vulnerability" value={summary.highest_vulnerability_district || "No data"} icon={ShieldAlert} tone="red" />

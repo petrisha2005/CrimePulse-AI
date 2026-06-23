@@ -1,135 +1,71 @@
+import { analystPermissions, findDemoUser, normalizeCrimePulseUser, type CrimePulseUser } from "../auth/users";
 import { withRouterBase } from "../utils/routerBase";
 
-export interface AuthUser {
-  name: string;
-  email: string;
-  source: "catalyst" | "demo";
-}
+export type AuthUser = CrimePulseUser;
 
-interface LoginResult {
-  success: boolean;
-  user?: AuthUser;
-  message?: string;
-}
+interface LoginResult { success: boolean; user?: AuthUser; message?: string; }
 
 declare global {
   interface Window {
     catalyst?: {
       init: (config: { project_Id: string; zaid?: string; environment?: string }) => void;
-      auth: {
-        signIn: (redirectUrl?: string) => void;
-        signOut: (redirectUrl?: string) => void;
-        isUserAuthenticated: () => Promise<boolean>;
-        getCurrentUser: () => Promise<{ first_name?: string; last_name?: string; email_id?: string }>;
-      };
+      auth: { signIn: (redirectUrl?: string) => void; signOut: (redirectUrl?: string) => void; isUserAuthenticated: () => Promise<boolean>; getCurrentUser: () => Promise<{ first_name?: string; last_name?: string; email_id?: string }>; };
     };
   }
 }
 
-const DEMO_SESSION_KEY = "crimepulse_demo_auth";
-const DEMO_EMAIL = "officer@crimepulse.gov.in";
-const DEMO_PASSWORD = "CrimePulse@123";
+const AUTH_STORAGE_KEY = "crimepulse_auth_user";
 let initialized = false;
 
 export const initCatalyst = () => {
   if (initialized || !window.catalyst) return;
-
-  // Configure VITE_CATALYST_PROJECT_ID after creating the project in Zoho Catalyst.
-  // For production, remove demo mode below and rely only on Catalyst Authentication.
+  // TODO: Replace demo credential validation with Catalyst Authentication role claims in production.
   const projectId = import.meta.env.VITE_CATALYST_PROJECT_ID;
   if (!projectId) return;
-
-  window.catalyst.init({
-    project_Id: projectId,
-    environment: import.meta.env.VITE_CATALYST_ENVIRONMENT || "Development"
-  });
+  window.catalyst.init({ project_Id: projectId, environment: import.meta.env.VITE_CATALYST_ENVIRONMENT || "Development" });
   initialized = true;
 };
 
-const isCatalystConfigured = () => Boolean(import.meta.env.VITE_CATALYST_PROJECT_ID && window.catalyst);
-
-const getDemoUser = (): AuthUser | null => {
-  const raw = sessionStorage.getItem(DEMO_SESSION_KEY);
-  if (!raw) return null;
-  try {
-    return JSON.parse(raw) as AuthUser;
-  } catch {
-    sessionStorage.removeItem(DEMO_SESSION_KEY);
-    return null;
-  }
+const catalystConfigured = () => Boolean(import.meta.env.VITE_CATALYST_PROJECT_ID && window.catalyst);
+const readStoredUser = (): AuthUser | null => {
+  try { const raw = localStorage.getItem(AUTH_STORAGE_KEY); return raw ? normalizeCrimePulseUser(JSON.parse(raw) as AuthUser) : null; } catch { localStorage.removeItem(AUTH_STORAGE_KEY); return null; }
 };
+const storeUser = (user: AuthUser) => localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(user));
 
 export const authService = {
   async login(email: string, password: string): Promise<LoginResult> {
+    // TODO: Replace this hackathon-only credential lookup with Catalyst Authentication.
+    const demo = findDemoUser(email, password);
+    if (demo) {
+      const { password: _password, ...user } = demo;
+      storeUser(user);
+      return { success: true, user };
+    }
     initCatalyst();
-
-    if (isCatalystConfigured()) {
-      // Catalyst Authentication owns the secure credential exchange and session cookie.
-      // The hosted Catalyst login screen will complete sign-in and redirect back here.
+    // Catalyst sign-in is opt-in so an invalid demo credential never bypasses this login screen.
+    if (import.meta.env.VITE_USE_CATALYST_AUTH === "true" && catalystConfigured()) {
       window.catalyst?.auth.signIn(`${window.location.origin}${withRouterBase("/dashboard")}`);
       return { success: true };
     }
-
-    // Temporary local demo mode for development preview only. Remove before production.
-    if (email.trim().toLowerCase() === DEMO_EMAIL && password === DEMO_PASSWORD) {
-      const user: AuthUser = {
-        name: "CrimePulse AI Demo Officer",
-        email: DEMO_EMAIL,
-        source: "demo"
-      };
-      sessionStorage.setItem(DEMO_SESSION_KEY, JSON.stringify(user));
-      return { success: true, user };
-    }
-
-    return {
-      success: false,
-      message: "Invalid credentials. Use Catalyst Authentication or the temporary demo account."
-    };
+    return { success: false, message: "Invalid demo credentials. Please select one of the authorized demo roles." };
   },
-
-  async logout(): Promise<void> {
+  async logout() {
+    localStorage.removeItem(AUTH_STORAGE_KEY);
     initCatalyst();
-    sessionStorage.removeItem(DEMO_SESSION_KEY);
-
-    if (isCatalystConfigured()) {
-      window.catalyst?.auth.signOut(`${window.location.origin}${withRouterBase("/login")}`);
-      return;
-    }
-
-    window.location.assign(withRouterBase("/login"));
+    if (catalystConfigured()) window.catalyst?.auth.signOut(`${window.location.origin}${withRouterBase("/login")}`);
   },
-
   async getCurrentUser(): Promise<AuthUser | null> {
+    const stored = readStoredUser();
+    if (stored) return stored;
     initCatalyst();
-    const demoUser = getDemoUser();
-    if (demoUser) return demoUser;
-
-    if (!isCatalystConfigured()) return null;
-
+    if (!catalystConfigured()) return null;
     try {
-      const catalystUser = await window.catalyst?.auth.getCurrentUser();
-      if (!catalystUser) return null;
-      const name = [catalystUser.first_name, catalystUser.last_name].filter(Boolean).join(" ");
-      return {
-        name: name || catalystUser.email_id || "Catalyst User",
-        email: catalystUser.email_id || "",
-        source: "catalyst"
-      };
-    } catch {
-      return null;
-    }
+      const user = await window.catalyst?.auth.getCurrentUser();
+      if (!user) return null;
+      const currentUser: AuthUser = { id: `catalyst-${user.email_id}`, name: [user.first_name, user.last_name].filter(Boolean).join(" ") || user.email_id || "Catalyst User", email: user.email_id || "", role: "crime_analyst", roleLabel: "Crime Analyst", assignedDistrict: "All", assignedPoliceStation: "All", accessScope: { type: "statewide", district: "All", police_station: "All" }, defaultRoute: "/pattern-discovery", allowedModules: ["dashboard", "upload", "records", "pattern-discovery", "crime-time-machine", "crime-forecast", "socio-economic-insights", "district-analytics", "risk-intelligence", "ai-insights", "ai-report", "reports", "presentation-mode"], preferences: { defaultDataset: "all", defaultTimeRange: "all", defaultMapMode: "analytics", reportFormat: "full-intelligence-report", themeDensity: "comfortable" }, permissions: analystPermissions, source: "catalyst" };
+      storeUser(currentUser);
+      return currentUser;
+    } catch { return null; }
   },
-
-  async checkAuthStatus(): Promise<boolean> {
-    initCatalyst();
-    if (getDemoUser()) return true;
-
-    if (!isCatalystConfigured()) return false;
-
-    try {
-      return Boolean(await window.catalyst?.auth.isUserAuthenticated());
-    } catch {
-      return false;
-    }
-  }
+  async checkAuthStatus() { return Boolean(await this.getCurrentUser()); }
 };

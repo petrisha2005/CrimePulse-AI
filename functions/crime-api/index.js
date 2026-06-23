@@ -1,13 +1,21 @@
 const fs = require("fs");
+const crypto = require("crypto");
 const { parse } = require("csv-parse");
 const { formidable } = require("formidable");
 const catalyst = require("zcatalyst-sdk-node");
 const { fetchCrimeRecords, filterOptions } = require("./crimeAnalytics");
+const { CANONICAL_FIELDS, detectMapping, mapCrimeRow } = require("./csvMapping");
 
 // Configure CRIME_RECORDS_TABLE in Catalyst Function environment variables if
 // your Catalyst Data Store requires a table ID or a table name different from CrimeRecords.
 const CRIME_RECORDS_TABLE = process.env.CRIME_RECORDS_TABLE || process.env.CRIME_TABLE || "CrimeRecords";
 const BATCH_SIZE = Number(process.env.CSV_INSERT_BATCH_SIZE || 200);
+const UPLOAD_BATCH_SIZE = Math.min(200, Math.max(50, Number(process.env.CSV_UPLOAD_BATCH_SIZE || 100)));
+const uploadSessions = new Map();
+// Set DATASET_METADATA_COLUMNS=true only after adding the optional dataset columns
+// to Catalyst Data Store CrimeRecords. Keeping this false preserves older tables.
+const DATASET_METADATA_COLUMNS = process.env.DATASET_METADATA_COLUMNS === "true";
+const DATASET_FIELDS = ["dataset_id", "dataset_name", "upload_id", "source_file_name", "imported_at"];
 
 const REQUIRED_CSV_COLUMNS = ["District_Name", "UnitName", "FIR_YEAR", "FIR_MONTH", "FIR_Day", "CrimeGroup_Name"];
 const ALLOWED_CRIME_RECORD_FIELDS = [
@@ -36,7 +44,7 @@ const ALLOWED_CRIME_RECORD_FIELDS = [
   "conviction_count",
   "unit_id",
   "created_time"
-];
+].concat(DATASET_METADATA_COLUMNS ? DATASET_FIELDS : []);
 const CRIME_FIELDS = ALLOWED_CRIME_RECORD_FIELDS;
 const CSV_TO_DATASTORE_MAPPING = {
   crime_id: "Generated if missing",
@@ -89,6 +97,8 @@ const AVAILABLE_ROUTES = [
   "GET /health",
   "GET /crimes",
   "GET /crimes/count",
+  "POST /crimes/clear-all",
+  "POST /crimes/clear-batch",
   "GET /crimes/filter",
   "GET /crimes/filters",
   "GET /crimes/debug/mapping",
@@ -97,7 +107,14 @@ const AVAILABLE_ROUTES = [
   "POST /crimes",
   "PUT /crimes/:ROWID",
   "DELETE /crimes/:ROWID",
-  "POST /crimes/upload-csv"
+  "POST /crimes/upload-csv",
+  "POST /crimes/upload-session/start",
+  "POST /crimes/upload-batch",
+  "POST /crimes/upload-session/finish"
+  ,"GET /datasets"
+  ,"GET /datasets/:dataset_id/summary"
+  ,"DELETE /datasets/:dataset_id"
+  ,"POST /datasets/clear-all"
 ];
 
 function getPath(req, serviceName) {
@@ -146,6 +163,8 @@ const getStoredCount = async (req) => {
   const rows = await executeZcql(req, `SELECT COUNT(ROWID) FROM ${CRIME_RECORDS_TABLE}`);
   return rows[0] ? firstNumber(rows[0]) : 0;
 };
+
+const datasetMode = (count) => count > 100000 ? "large" : count > 10000 ? "medium" : "small";
 
 const getStorageErrorMessage = (error) => {
   const raw = error?.message || error?.toString?.() || "Unknown Data Store insert error";
@@ -399,8 +418,13 @@ const toClientRecord = (row) => ({
   accused_count: toNumber(row.accused_count),
   arrested_count: toNumber(row.arrested_count),
   conviction_count: toNumber(row.conviction_count),
-  unit_id: row.unit_id,
-  created_time: row.created_time
+    unit_id: row.unit_id,
+    created_time: row.created_time,
+    dataset_id: row.dataset_id || "",
+    dataset_name: row.dataset_name || "",
+    upload_id: row.upload_id || "",
+    source_file_name: row.source_file_name || "",
+    imported_at: row.imported_at || ""
 });
 
 const getAllCrimes = async (req) => {
@@ -428,7 +452,8 @@ const normalizeCrimeQuery = (params) => ({
   police_station: activeValue(params.police_station) ? String(params.police_station) : "",
   crime_type: activeValue(params.crime_type) ? String(params.crime_type) : "",
   severity: activeValue(params.severity) ? String(params.severity) : "",
-  fir_stage: activeValue(params.fir_stage) ? String(params.fir_stage) : activeValue(params.status) ? String(params.status) : ""
+  fir_stage: activeValue(params.fir_stage) ? String(params.fir_stage) : activeValue(params.status) ? String(params.status) : "",
+  dataset_id: activeValue(params.dataset_id) ? String(params.dataset_id) : ""
 });
 
 const searchableFields = ["crime_id", "district", "police_station", "crime_type", "crime_subtype", "fir_stage", "complaint_mode", "act_section", "offence_location"];
@@ -443,6 +468,7 @@ const filterCrimes = (crimes, params) => {
     if (query.crime_type && crime.crime_type !== query.crime_type) return false;
     if (query.severity && crime.severity !== query.severity && crime.severity_original !== query.severity) return false;
     if (query.fir_stage && crime.fir_stage !== query.fir_stage) return false;
+    if (query.dataset_id && crime.dataset_id !== query.dataset_id) return false;
     if (query.search && !searchableFields.some((field) => String(crime[field] || "").toLowerCase().includes(query.search))) return false;
     return true;
   });
@@ -499,6 +525,203 @@ const insertBatch = async (table, batch, batchNumber) => {
   }
 };
 
+const escapeZcql = (value) => String(value ?? "").replace(/'/g, "''");
+
+const existingCrimeRows = async (req, ids, datasetId = "") => {
+  const uniqueIds = [...new Set(ids.filter(Boolean))].slice(0, 200);
+  if (!uniqueIds.length) return new Map();
+  try {
+    const values = uniqueIds.map((id) => `'${escapeZcql(id)}'`).join(",");
+    const datasetClause = DATASET_METADATA_COLUMNS && datasetId ? ` AND dataset_id = '${escapeZcql(datasetId)}'` : "";
+    const rows = await executeZcql(req, `SELECT ROWID, crime_id FROM ${CRIME_RECORDS_TABLE} WHERE crime_id IN (${values})${datasetClause}`);
+    return new Map(rows.map((row) => {
+      const source = row?.[CRIME_RECORDS_TABLE] || row;
+      return [source?.crime_id, source?.ROWID];
+    }).filter(([crimeId, rowId]) => crimeId && rowId));
+  } catch (error) {
+    console.warn("[crime-api] duplicate lookup skipped", error.message);
+    return new Map();
+  }
+};
+
+const createSession = (metadata = {}) => {
+  const uploadId = `upload-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  const session = {
+    upload_id: uploadId,
+    started_at: new Date().toISOString(),
+    total_rows: 0,
+    valid_rows: 0,
+    inserted_rows: 0,
+    skipped_duplicates: 0,
+    failed_rows: 0,
+    warning_rows: 0,
+    validation_errors: [],
+    failed_row_details: [],
+    districts: new Set(),
+    crime_types: new Set(),
+    years: new Set(),
+    seen_ids: new Set(),
+    batch_errors: [],
+    cleared_existing_records: false
+  };
+  session.import_mode = metadata.import_mode || "new_dataset";
+  session.dataset_id = metadata.dataset_id || createDatasetId();
+  session.dataset_name = String(metadata.dataset_name || "Untitled dataset").trim();
+  session.source_file_name = String(metadata.source_file_name || "").trim();
+  uploadSessions.set(uploadId, session);
+  return session;
+};
+
+const createDatasetId = () => `dataset-${crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`}`;
+
+const clearAllCrimeRecords = async (req) => {
+  const table = getTable(req);
+  let deleted = 0;
+  while (true) {
+    const rows = await executeZcql(req, `SELECT ROWID FROM ${CRIME_RECORDS_TABLE} LIMIT 200`);
+    const rowIds = rows.map((row) => row?.[CRIME_RECORDS_TABLE]?.ROWID || row?.ROWID).filter(Boolean);
+    if (!rowIds.length) break;
+    for (const rowId of rowIds) {
+      await table.deleteRow(rowId);
+      deleted += 1;
+    }
+  }
+  return deleted;
+};
+
+const clearCrimeRecordsBatch = async (req, requestedBatchSize) => {
+  const parsedBatchSize = Number(requestedBatchSize);
+  const batchSize = Number.isFinite(parsedBatchSize) ? Math.min(200, Math.max(1, Math.floor(parsedBatchSize))) : 200;
+  const rows = await executeZcql(req, `SELECT ROWID FROM ${CRIME_RECORDS_TABLE} LIMIT ${batchSize}`);
+  const rowIds = rows.map((row) => row?.[CRIME_RECORDS_TABLE]?.ROWID || row?.ROWID).filter(Boolean);
+  if (!rowIds.length) return { deleted_rows: 0, remaining_records: 0, done: true };
+
+  const table = getTable(req);
+  for (let offset = 0; offset < rowIds.length; offset += 10) {
+    const results = await Promise.allSettled(rowIds.slice(offset, offset + 10).map((rowId) => table.deleteRow(rowId)));
+    const failure = results.find((result) => result.status === "rejected");
+    if (failure?.status === "rejected") throw failure.reason;
+  }
+
+  const remaining_records = await getStoredCount(req);
+  return { deleted_rows: rowIds.length, remaining_records, done: remaining_records === 0 };
+};
+
+const datasetSummary = (records, datasetId) => {
+  const scoped = datasetId ? records.filter((record) => record.dataset_id === datasetId) : records;
+  const years = [...new Set(scoped.map((record) => record.fir_year).filter(Boolean))].map(Number).filter(Number.isFinite).sort((a, b) => a - b);
+  return {
+    dataset_id: datasetId || "all",
+    record_count: scoped.length,
+    year_range: years.length ? `${years[0]}-${years.at(-1)}` : "No data",
+    district_count: new Set(scoped.map((record) => record.district).filter(Boolean)).size,
+    crime_type_count: new Set(scoped.map((record) => record.crime_type).filter(Boolean)).size
+  };
+};
+
+const addSessionError = (session, detail) => {
+  if (session.validation_errors.length < 200) session.validation_errors.push(detail);
+  if (session.failed_row_details.length < 1000) session.failed_row_details.push(detail);
+};
+
+const finalizeSessionSummary = async (req, session) => {
+  const totalCount = await getStoredCount(req).catch(() => 0);
+  const years = [...session.years].map(Number).filter(Number.isFinite).sort((a, b) => a - b);
+  return {
+    success: session.failed_rows === 0 && session.batch_errors.length === 0,
+    upload_id: session.upload_id,
+    totalRows: session.total_rows,
+    validRows: session.valid_rows,
+    insertedRows: session.inserted_rows,
+    skippedRows: session.skipped_duplicates + session.failed_rows,
+    skippedDuplicates: session.skipped_duplicates,
+    errorRows: session.failed_rows,
+    warningRows: session.warning_rows,
+    validationErrors: session.validation_errors,
+    failedRowDetails: session.failed_row_details,
+    batchErrors: session.batch_errors,
+    durationSeconds: Math.max(0, Math.round((Date.now() - new Date(session.started_at).getTime()) / 1000)),
+    detectedDistricts: [...session.districts].slice(0, 100),
+    detectedCrimeTypes: [...session.crime_types].slice(0, 100),
+    detectedYearRange: years.length ? `${years[0]}-${years.at(-1)}` : "No data",
+    storageVerified: session.inserted_rows > 0 && totalCount > 0,
+    storedRecordCountAfterUpload: totalCount
+  };
+};
+
+const processUploadRows = async (req, session, rows, mapping, uploadMode, batchNumber) => {
+  const detected = detectMapping(Object.keys(rows[0] || {}));
+  const effectiveMapping = { ...detected.mapping, ...(mapping || {}) };
+  const table = getTable(req);
+  const valid = [];
+  rows.forEach((row, index) => {
+    session.total_rows += 1;
+    const result = mapCrimeRow(row, effectiveMapping, session.total_rows);
+    if (result.errors.length) {
+      session.failed_rows += 1;
+      addSessionError(session, { row: result.rowNumber, errors: result.errors, raw: row });
+      return;
+    }
+    if (result.warnings.length) session.warning_rows += 1;
+    if (DATASET_METADATA_COLUMNS) {
+      result.record.dataset_id = session.dataset_id;
+      result.record.dataset_name = session.dataset_name;
+      result.record.upload_id = session.upload_id;
+      result.record.source_file_name = session.source_file_name;
+      result.record.imported_at = session.started_at;
+    }
+    session.valid_rows += 1;
+    valid.push(result.record);
+  });
+
+  // Replace is intentionally delayed until a valid batch is ready. This lets the client
+  // begin parsing immediately and avoids deleting records when the CSV cannot be imported.
+  if (session.import_mode === "replace" && !session.cleared_existing_records && valid.length > 0) {
+    console.log("[crime-api] clearing existing CrimeRecords before replace batch", batchNumber);
+    await clearAllCrimeRecords(req);
+    session.cleared_existing_records = true;
+  }
+
+  const knownRows = await existingCrimeRows(req, valid.map((record) => record.crime_id), session.dataset_id);
+  const updates = [];
+  const insertable = valid.filter((record) => {
+    const existingRowId = knownRows.get(record.crime_id);
+    if (session.seen_ids.has(record.crime_id)) {
+      session.skipped_duplicates += 1;
+      return false;
+    }
+    if (existingRowId) {
+      if (uploadMode === "replace") updates.push({ ...record, ROWID: existingRowId });
+      else session.skipped_duplicates += 1;
+      return false;
+    }
+    session.seen_ids.add(record.crime_id);
+    session.districts.add(record.district || "Unknown");
+    session.crime_types.add(record.crime_type || record.crime_subtype || "Unknown");
+    if (record.fir_year) session.years.add(record.fir_year);
+    return true;
+  });
+  for (const update of updates) {
+    try {
+      await table.updateRow(update);
+      session.inserted_rows += 1;
+    } catch (error) {
+      session.failed_rows += 1;
+      addSessionError(session, { row: "matching record", error: getStorageErrorMessage(error) });
+    }
+  }
+  for (let offset = 0; offset < insertable.length; offset += UPLOAD_BATCH_SIZE) {
+    const result = await insertBatch(table, insertable.slice(offset, offset + UPLOAD_BATCH_SIZE), `${batchNumber}.${offset / UPLOAD_BATCH_SIZE + 1}`);
+    session.inserted_rows += result.inserted;
+    if (result.error) {
+      session.failed_rows += insertable.slice(offset, offset + UPLOAD_BATCH_SIZE).length;
+      session.batch_errors.push(result.error);
+      addSessionError(session, { batch: batchNumber, error: result.error });
+    }
+  }
+  return { effectiveMapping, received: rows.length, inserted: insertable.length };
+};
+
 const uploadCsv = async (req) => {
   const { files } = await parseMultipart(req);
   const file = Array.isArray(files.file) ? files.file[0] : files.file;
@@ -534,6 +757,7 @@ const uploadCsv = async (req) => {
   let batch = [];
   let batchNumber = 0;
   let headersChecked = false;
+  let flexibleMapping = null;
   let firstRecord = null;
   let firstInsertLogged = false;
 
@@ -571,25 +795,26 @@ const uploadCsv = async (req) => {
 
     if (!headersChecked) {
       headersChecked = true;
-      const missing = REQUIRED_CSV_COLUMNS.filter((column) => !Object.prototype.hasOwnProperty.call(row, column));
-      if (missing.length > 0) {
-        validationErrors.push(`Missing required columns: ${missing.join(", ")}`);
+      flexibleMapping = detectMapping(Object.keys(row));
+      if (!flexibleMapping.validDataset) {
+        validationErrors.push(`This CSV does not look like a crime records dataset. Missing: ${flexibleMapping.missingMinimum.join(", ")}`);
         skippedRows = totalRows;
         break;
       }
+      console.log("[crime-api] flexible CSV mapping", flexibleMapping);
     }
 
-    const rowErrors = validateCsvRow(row);
-    if (rowErrors.length > 0) {
+    const mapped = mapCrimeRow(row, flexibleMapping.mapping, totalRows);
+    if (mapped.errors.length > 0) {
       errorRows += 1;
       skippedRows += 1;
       if (validationErrors.length < 100) {
-        validationErrors.push(`Row ${totalRows + 1}: ${rowErrors.join(", ")}`);
+        validationErrors.push(`Row ${totalRows + 1}: ${mapped.errors.join(", ")}`);
       }
       continue;
     }
 
-    const transformedRecord = transformCsvRowToCrimeRecord(row, totalRows);
+    const transformedRecord = mapped.record;
     if (!firstRecord) firstRecord = transformedRecord;
     batch.push(transformedRecord);
     validRows += 1;
@@ -667,6 +892,7 @@ module.exports = async (req, res) => {
         table: CRIME_RECORDS_TABLE,
         allowedFields: ALLOWED_CRIME_RECORD_FIELDS,
         csvToDataStoreMapping: CSV_TO_DATASTORE_MAPPING,
+        canonicalFields: CANONICAL_FIELDS,
         note: "Only allowed fields are inserted into Catalyst."
       });
     }
@@ -676,14 +902,69 @@ module.exports = async (req, res) => {
         success: true,
         table: CRIME_RECORDS_TABLE,
         allowedFields: ALLOWED_CRIME_RECORD_FIELDS,
+        datasetMetadataColumnsEnabled: DATASET_METADATA_COLUMNS,
+        optionalDatasetColumns: DATASET_FIELDS,
         systemColumnsNotInserted: ["ROWID", "CREATORID", "CREATEDTIME", "MODIFIEDTIME"],
         message: "Verify these columns exist in Catalyst Data Store table CrimeRecords."
       });
     }
 
+    if (req.method === "GET" && path === "/datasets") {
+      if (!DATASET_METADATA_COLUMNS) return send(res, 200, { success: true, data: [], message: "Dataset metadata is disabled. Add optional columns and set DATASET_METADATA_COLUMNS=true." });
+      const records = await getAllCrimes(req);
+      const groups = new Map();
+      records.forEach((record) => {
+        if (!record.dataset_id) return;
+        if (!groups.has(record.dataset_id)) groups.set(record.dataset_id, { dataset_id: record.dataset_id, dataset_name: record.dataset_name || record.dataset_id, source_file_name: record.source_file_name || "", upload_id: record.upload_id || "", imported_at: record.imported_at || record.created_time || "" });
+      });
+      return send(res, 200, { success: true, data: [...groups.values()].map((dataset) => ({ ...dataset, ...datasetSummary(records, dataset.dataset_id) })).sort((a, b) => String(b.imported_at).localeCompare(String(a.imported_at))) });
+    }
+
+    const datasetMatch = path.match(/^\/datasets\/([^/]+)(?:\/summary)?$/);
+    if (datasetMatch && req.method === "GET" && path.endsWith("/summary")) {
+      if (!DATASET_METADATA_COLUMNS) return send(res, 400, { success: false, message: "Dataset metadata columns are not enabled." });
+      const records = await getAllCrimes(req);
+      return send(res, 200, { success: true, data: datasetSummary(records, decodeURIComponent(datasetMatch[1])) });
+    }
+
+    if (datasetMatch && req.method === "DELETE") {
+      if (!DATASET_METADATA_COLUMNS) return send(res, 400, { success: false, message: "Dataset metadata columns are not enabled." });
+      const body = await readJsonBody(req);
+      if (body.confirmation !== "DELETE") return send(res, 400, { success: false, message: "Enter confirmation: DELETE before removing this dataset." });
+      const datasetId = decodeURIComponent(datasetMatch[1]);
+      const records = await getAllCrimes(req);
+      const table = getTable(req);
+      const matches = records.filter((record) => record.dataset_id === datasetId && record.ROWID);
+      for (const record of matches) await table.deleteRow(record.ROWID);
+      return send(res, 200, { success: true, data: { dataset_id: datasetId, deleted_records: matches.length } });
+    }
+
+    if (req.method === "POST" && path === "/datasets/clear-all") {
+      const body = await readJsonBody(req);
+      if (body.confirmation !== "RESET") return send(res, 400, { success: false, message: "Enter confirmation: RESET before clearing CrimeRecords." });
+      const deleted = await clearAllCrimeRecords(req);
+      return send(res, 200, { success: true, data: { deleted_records: deleted } });
+    }
+
     if (req.method === "GET" && path.endsWith("/crimes/count")) {
       const totalRecords = await getStoredCount(req);
-      return send(res, 200, { data: { totalRecords }, totalRecords });
+      return send(res, 200, { data: { totalRecords, datasetMode: datasetMode(totalRecords) }, totalRecords, datasetMode: datasetMode(totalRecords) });
+    }
+
+    if (req.method === "POST" && path.endsWith("/crimes/clear-all")) {
+      const body = await readJsonBody(req);
+      if (body.confirmation !== "RESET") return send(res, 400, { success: false, message: "Enter confirmation: RESET before clearing CrimeRecords." });
+      const deleted_rows = await clearAllCrimeRecords(req);
+      console.log("[crime-api] CrimeRecords cleared", { deleted_rows });
+      return send(res, 200, { success: true, deleted_rows, totalRecords: 0, message: "CrimeRecords cleared successfully.", data: { deleted_rows, totalRecords: 0, message: "CrimeRecords cleared successfully." } });
+    }
+
+    if (req.method === "POST" && path.endsWith("/crimes/clear-batch")) {
+      const body = await readJsonBody(req);
+      if (body.confirmation !== "RESET") return send(res, 400, { success: false, message: "Enter confirmation: RESET before clearing CrimeRecords." });
+      const result = await clearCrimeRecordsBatch(req, body.batch_size);
+      console.log("[crime-api] CrimeRecords clear batch complete", result);
+      return send(res, 200, { success: true, ...result, data: result });
     }
 
     if (req.method === "GET" && path.endsWith("/crimes/filters")) {
@@ -729,6 +1010,41 @@ module.exports = async (req, res) => {
 
       const inserted = await getTable(req).insertRow(normalized);
       return send(res, 201, { data: inserted });
+    }
+
+    if (req.method === "POST" && path.endsWith("/crimes/upload-session/start")) {
+      const body = await readJsonBody(req);
+      if (body.import_mode === "replace" && body.confirm_replace !== true) return send(res, 400, { success: false, message: "Confirm replacement before clearing existing CrimeRecords." });
+      if (body.import_mode === "new_dataset" && !DATASET_METADATA_COLUMNS) return send(res, 400, { success: false, message: "Create new dataset requires dataset_id, dataset_name, upload_id, source_file_name, and imported_at columns. Add them in Catalyst and set DATASET_METADATA_COLUMNS=true." });
+      const session = createSession(body);
+      return send(res, 201, { success: true, upload_id: session.upload_id, dataset_id: session.dataset_id, started_at: session.started_at, batch_size: UPLOAD_BATCH_SIZE, data: { upload_id: session.upload_id, dataset_id: session.dataset_id, started_at: session.started_at, batch_size: UPLOAD_BATCH_SIZE } });
+    }
+
+    if (req.method === "POST" && path.endsWith("/crimes/upload-batch")) {
+      const body = await readJsonBody(req);
+      const rows = Array.isArray(body.rows) ? body.rows : [];
+      const session = uploadSessions.get(body.upload_id);
+      if (!session) return send(res, 404, { success: false, message: "Upload session not found or expired. Start a new upload session." });
+      if (!rows.length) return send(res, 400, { success: false, message: "Upload batch contains no rows." });
+      if (rows.length > 200) return send(res, 400, { success: false, message: "Upload batch exceeds the maximum 200 rows. Reduce the batch size and retry." });
+      const detected = detectMapping(Object.keys(rows[0] || {}));
+      const mergedMapping = { ...detected.mapping, ...(body.mapping || {}) };
+      const minimumSatisfied = (mergedMapping.district || mergedMapping.police_station) && (mergedMapping.crime_type || mergedMapping.crime_subtype) && (mergedMapping.fir_year || mergedMapping.crime_date);
+      if (!minimumSatisfied) {
+        return send(res, 400, { success: false, message: "This CSV does not look like a crime records dataset.", missingMinimum: detected.missingMinimum, mapping: mergedMapping });
+      }
+      const result = await processUploadRows(req, session, rows, mergedMapping, body.upload_mode || body.duplicate_mode || "skip_duplicates", body.batch_index || 1);
+      const totals = await finalizeSessionSummary(req, session);
+      return send(res, 200, { success: true, batch_index: body.batch_index || 1, received_rows: rows.length, inserted_rows: totals.insertedRows, failed_rows: totals.errorRows, skipped_duplicates: totals.skippedDuplicates, cleared_existing_records: session.cleared_existing_records, errors: totals.validationErrors.slice(-20), data: { upload_id: session.upload_id, batch_index: body.batch_index || 1, total_batches: body.total_batches || 0, cleared_existing_records: session.cleared_existing_records, ...result, totals } });
+    }
+
+    if (req.method === "POST" && path.endsWith("/crimes/upload-session/finish")) {
+      const body = await readJsonBody(req);
+      const session = uploadSessions.get(body.upload_id);
+      if (!session) return send(res, 404, { success: false, message: "Upload session not found or expired." });
+      const result = await finalizeSessionSummary(req, session);
+      uploadSessions.delete(body.upload_id);
+      return send(res, 200, { success: true, data: result, ...result });
     }
 
     if (req.method === "PUT" && crimeRowMatch) {
@@ -800,6 +1116,9 @@ module.exports = async (req, res) => {
         "GET /crimes/debug/mapping",
         "GET /crimes/schema-check",
         "GET /crimes/:ROWID",
+        "POST /crimes/upload-session/start",
+        "POST /crimes/upload-batch",
+        "POST /crimes/upload-session/finish",
         "POST /crimes/upload-csv",
         "POST /crimes"
       ]

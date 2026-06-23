@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
 import maplibregl, { GeoJSONSource, Map } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { Layers, MapPin, RadioTower, RefreshCw, ShieldAlert, Siren } from "lucide-react";
@@ -11,6 +12,20 @@ import type { CrimeHotspot, CrimeMapPoint, DistrictIntensity, MapFilterOptions, 
 const emptyFilters: MapFilters = { fir_year: "All", fir_month: "All", district: "All", police_station: "All", crime_type: "All", severity: "All", fir_stage: "All" };
 const emptyOptions: MapFilterOptions = { years: [], months: [], districts: [], policeStations: [], crimeTypes: [], severities: [], statuses: [] };
 
+const filtersFromSearch = (search: string): MapFilters => {
+  const params = new URLSearchParams(search);
+  return {
+    ...emptyFilters,
+    fir_year: params.get("fir_year") || "All",
+    fir_month: params.get("fir_month") || "All",
+    district: params.get("district") || "All",
+    police_station: params.get("police_station") || "All",
+    crime_type: params.get("crime_type") || "All",
+    severity: params.get("severity") || "All",
+    fir_stage: params.get("fir_stage") || "All"
+  };
+};
+
 const riskColor = {
   Low: "#22c55e",
   Medium: "#facc15",
@@ -19,18 +34,32 @@ const riskColor = {
 };
 
 const karnatakaCenter: [number, number] = [75.6557, 16.1725];
-const mapLibreStyle = "https://demotiles.maplibre.org/style.json";
+const mapLibreStyle = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
 const osmFallbackStyle = {
   version: 8,
   sources: {
     osm: {
       type: "raster",
-      tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+      tiles: [
+        "https://a.tile.openstreetmap.org/{z}/{x}/{y}.png",
+        "https://b.tile.openstreetmap.org/{z}/{x}/{y}.png",
+        "https://c.tile.openstreetmap.org/{z}/{x}/{y}.png"
+      ],
       tileSize: 256,
       attribution: "© OpenStreetMap contributors"
     }
   },
-  layers: [{ id: "osm", type: "raster", source: "osm" }]
+  layers: [{
+    id: "osm",
+    type: "raster",
+    source: "osm",
+    paint: {
+      "raster-brightness-min": 0.05,
+      "raster-brightness-max": 0.45,
+      "raster-saturation": -0.7,
+      "raster-contrast": 0.35
+    }
+  }]
 };
 
 const SelectFilter = ({ label, value, options, onChange }: { label: string; value?: string; options: string[]; onChange: (value: string) => void }) => (
@@ -105,6 +134,27 @@ const toHotspotFeatures = (hotspots: CrimeHotspot[]) => ({
   }))
 });
 
+const TacticalHotspotCanvas = ({ hotspot }: { hotspot: CrimeHotspot }) => (
+  <div className="absolute inset-0 overflow-hidden bg-[#06111f]">
+    <div className="absolute inset-0 opacity-30" style={{ backgroundImage: "linear-gradient(rgba(0,212,255,0.13) 1px, transparent 1px), linear-gradient(90deg, rgba(0,212,255,0.13) 1px, transparent 1px)", backgroundSize: "38px 38px" }} />
+    <div className="absolute left-1/2 top-1/2 h-[420px] w-[420px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-command-300/25" />
+    <div className="absolute left-1/2 top-1/2 h-[280px] w-[280px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-command-300/20" />
+    <div className="absolute left-1/2 top-1/2 h-[140px] w-[140px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-command-300/25" />
+    <div className="absolute left-[48%] top-[45%] h-28 w-28 rounded-full border-2 border-alert-high bg-alert-high/20 shadow-[0_0_55px_rgba(249,115,22,0.8)] animate-ping" />
+    <div className="absolute left-[50%] top-[47%] h-20 w-20 rounded-full border-4 border-white bg-alert-high/70 shadow-[0_0_60px_rgba(239,68,68,0.9)]" />
+    <div className="absolute left-[52%] top-[58%] max-w-64 rounded border border-command-300/50 bg-command-950/95 p-4 shadow-glow">
+      <p className="text-xs uppercase tracking-[0.16em] text-command-300">District centroid fallback</p>
+      <h3 className="mt-2 text-lg font-semibold text-white">{hotspot.district}</h3>
+      <p className="text-sm text-slate-300">{hotspot.police_station}</p>
+      <div className="mt-3 flex flex-wrap gap-2 text-xs">
+        <span className="rounded border border-alert-high/60 bg-alert-high/15 px-2 py-1 text-alert-high">{hotspot.risk_level} Risk</span>
+        <span className="rounded border border-command-500/50 px-2 py-1 text-command-300">{hotspot.crime_count} crimes</span>
+      </div>
+      <p className="mt-3 text-sm text-slate-300">Top Crime: <span className="text-white">{hotspot.top_crime_type || hotspot.dominant_crime_type}</span></p>
+    </div>
+  </div>
+);
+
 const optionList = (options: MapFilterOptions, primary: keyof MapFilterOptions, fallback?: keyof MapFilterOptions) => {
   const primaryValue = options[primary];
   const fallbackValue = fallback ? options[fallback] : undefined;
@@ -117,12 +167,14 @@ const getStoredCount = async () => {
 };
 
 const HotspotMap = () => {
+  const location = useLocation();
+  const initialFilters = useMemo(() => filtersFromSearch(location.search), [location.search]);
   const mapContainer = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<Map | null>(null);
   const fallbackStyleTried = useRef(false);
   const hotspotMarkers = useRef<maplibregl.Marker[]>([]);
-  const [filters, setFilters] = useState<MapFilters>(emptyFilters);
-  const [appliedFilters, setAppliedFilters] = useState<MapFilters>(emptyFilters);
+  const [filters, setFilters] = useState<MapFilters>(initialFilters);
+  const [appliedFilters, setAppliedFilters] = useState<MapFilters>(initialFilters);
   const [options, setOptions] = useState<MapFilterOptions>(emptyOptions);
   const [summary, setSummary] = useState<MapSummary | null>(null);
   const [points, setPoints] = useState<CrimeMapPoint[]>([]);
@@ -141,7 +193,7 @@ const HotspotMap = () => {
   const [storedCount, setStoredCount] = useState<number | null>(null);
   const [layers, setLayers] = useState({
     crimeMarkers: true,
-    districtHeat: true,
+    districtHeat: false,
     hotspotCircles: true,
     redZonePulse: true,
     stationClusters: true
@@ -212,8 +264,7 @@ const HotspotMap = () => {
       container: mapContainer.current,
       style: mapLibreStyle,
       center: karnatakaCenter,
-      zoom: 8,
-      attributionControl: true
+      zoom: 8
     });
 
     mapRef.current = map;
@@ -278,7 +329,7 @@ const HotspotMap = () => {
 
       if (!map.getSource("district-intensity")) {
         map.addSource("district-intensity", { type: "geojson", data: districtGeoJson });
-        map.addLayer({ id: "district-heat", type: "circle", source: "district-intensity", paint: { "circle-color": ["match", ["get", "intensity_level"], "Critical", "#ef4444", "High", "#f97316", "Medium", "#facc15", "#22c55e"], "circle-radius": ["interpolate", ["linear"], ["get", "crime_count"], 1, 14, 500, 48], "circle-opacity": 0.34 } });
+        map.addLayer({ id: "district-heat", type: "circle", source: "district-intensity", layout: { visibility: layers.districtHeat ? "visible" : "none" }, paint: { "circle-color": ["match", ["get", "intensity_level"], "Critical", "#ef4444", "High", "#f97316", "Medium", "#00d4ff", "#22c55e"], "circle-radius": ["interpolate", ["linear"], ["get", "crime_count"], 1, 12, 500, 36], "circle-blur": 0.7, "circle-opacity": 0.18 } });
         map.on("click", "district-heat", (event) => {
           const feature = event.features?.[0];
           if (!feature) return;
@@ -291,6 +342,17 @@ const HotspotMap = () => {
       if (!map.getSource("hotspots")) {
         map.addSource("hotspots", { type: "geojson", data: hotspotGeoJson });
         map.addLayer({
+          id: "hotspot-pulse-rings",
+          type: "circle",
+          source: "hotspots",
+          paint: {
+            "circle-color": ["match", ["get", "risk_level"], "Critical", "#ef4444", "#f97316"],
+            "circle-radius": ["interpolate", ["linear"], ["coalesce", ["get", "intensity_score"], ["get", "crime_count"]], 1, 28, 80, 62],
+            "circle-blur": 0.75,
+            "circle-opacity": 0.3
+          }
+        });
+        map.addLayer({
           id: "hotspot-circles",
           type: "circle",
           source: "hotspots",
@@ -302,6 +364,19 @@ const HotspotMap = () => {
             "circle-stroke-color": ["case", ["!=", ["get", "coordinate_source"], "original"], "#ffffff", "#0f172a"],
             "circle-stroke-opacity": 0.9
           }
+        });
+        map.addLayer({
+          id: "hotspot-labels",
+          type: "symbol",
+          source: "hotspots",
+          layout: {
+            "text-field": ["concat", ["get", "district"], "\n", ["get", "police_station"]],
+            "text-size": 12,
+            "text-offset": [0, 2.8],
+            "text-anchor": "top",
+            "text-allow-overlap": true
+          },
+          paint: { "text-color": "#ffffff", "text-halo-color": "#06111f", "text-halo-width": 2 }
         });
         map.on("click", "hotspot-circles", (event) => {
           const feature = event.features?.[0];
@@ -333,12 +408,13 @@ const HotspotMap = () => {
             id: "crime-heatmap-layer",
             type: "heatmap",
             source: "crime-heatmap",
+            layout: { visibility: layers.districtHeat ? "visible" : "none" },
             paint: {
               "heatmap-weight": ["interpolate", ["linear"], ["get", "weight"], 0, 0, 1, 1],
-              "heatmap-intensity": 1.25,
-              "heatmap-radius": ["interpolate", ["linear"], ["zoom"], 4, 18, 9, 42],
-              "heatmap-opacity": 0.55,
-              "heatmap-color": ["interpolate", ["linear"], ["heatmap-density"], 0, "rgba(0,0,0,0)", 0.25, "#00d4ff", 0.5, "#facc15", 0.75, "#f97316", 1, "#ef4444"]
+              "heatmap-intensity": 0.75,
+              "heatmap-radius": ["interpolate", ["linear"], ["zoom"], 4, 10, 9, 24],
+              "heatmap-opacity": 0.16,
+              "heatmap-color": ["interpolate", ["linear"], ["heatmap-density"], 0, "rgba(0,0,0,0)", 0.35, "#00d4ff", 0.65, "#f97316", 1, "#ef4444"]
             }
           }, map.getLayer("crime-markers") ? "crime-markers" : undefined);
         } else {
@@ -363,7 +439,9 @@ const HotspotMap = () => {
     setVisibility("crime-markers", layers.crimeMarkers);
     setVisibility("district-heat", layers.districtHeat);
     setVisibility("crime-heatmap-layer", layers.districtHeat);
+    setVisibility("hotspot-pulse-rings", layers.redZonePulse);
     setVisibility("hotspot-circles", layers.hotspotCircles);
+    setVisibility("hotspot-labels", layers.hotspotCircles);
     setVisibility("clusters", layers.stationClusters);
     setVisibility("cluster-count", layers.stationClusters);
   }, [layers, mapLoaded]);
@@ -450,7 +528,7 @@ const HotspotMap = () => {
         </button>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
+      <div className="stat-grid">
         <DashboardCard title="Total Mapped Crimes" value={summary?.total_records || 0} icon={MapPin} />
         <DashboardCard title="With Coordinates" value={summary?.records_with_coordinates || 0} icon={RadioTower} tone="green" />
         <DashboardCard title="Fallback Coordinates" value={fallbackCount} icon={ShieldAlert} tone="orange" />
@@ -532,31 +610,28 @@ const HotspotMap = () => {
           </section>
         </aside>
 
-        <section className="relative min-h-[650px] overflow-hidden rounded-md border border-command-700 bg-command-900 shadow-glow xl:min-h-[calc(100vh-220px)]">
+        <section className="hotspot-map-main relative min-h-[720px] overflow-hidden rounded-md border border-command-500/30 bg-[#06111f] shadow-glow xl:h-[calc(100vh-90px)] xl:min-h-[720px]">
           <div ref={mapContainer} className="absolute inset-0 h-full min-h-[650px] w-full" />
+          <div className="pointer-events-none absolute left-4 top-4 z-10 grid gap-2 sm:grid-cols-2">
+            <div className="border border-command-300/30 bg-command-950/90 px-3 py-2 text-xs text-slate-300"><span className="text-slate-500">Total Records</span><p className="mt-1 text-base font-semibold text-white">{summary?.total_records || 0}</p></div>
+            <div className="border border-command-300/30 bg-command-950/90 px-3 py-2 text-xs text-slate-300"><span className="text-slate-500">Hotspots</span><p className="mt-1 text-base font-semibold text-white">{hotspots.length}</p></div>
+            <div className="border border-command-300/30 bg-command-950/90 px-3 py-2 text-xs text-slate-300"><span className="text-slate-500">Highest Risk</span><p className="mt-1 text-sm font-semibold text-white">{summary?.highest_intensity_district || "No data"}</p></div>
+            <div className="border border-command-300/30 bg-command-950/90 px-3 py-2 text-xs text-slate-300"><span className="text-slate-500">Coordinate Mode</span><p className="mt-1 text-sm font-semibold text-alert-high">{fallbackCount > 0 ? "District fallback" : "Exact coordinates"}</p></div>
+            <div className="border border-command-300/30 bg-command-950/90 px-3 py-2 text-xs text-slate-300 sm:col-span-2"><span className="text-slate-500">Geo Accuracy</span><p className="mt-1 text-sm font-semibold text-white">{summary?.coordinate_available_percentage || 0}% exact</p></div>
+          </div>
           {loading && <div className="absolute left-4 top-4 rounded border border-command-700 bg-command-900/90 px-3 py-2 text-sm text-slate-300">Updating map...</div>}
           {fallbackCount > 0 && (
             <div className="absolute right-4 top-4 rounded border border-alert-high/40 bg-command-900/90 px-3 py-2 text-sm text-alert-high">
               District centroid fallback
             </div>
           )}
-          {!mapLoaded && !mapError && (
+          {!mapLoaded && firstValidHotspot && <TacticalHotspotCanvas hotspot={firstValidHotspot} />}
+          {!mapLoaded && !firstValidHotspot && (
             <div className="absolute inset-0 flex items-center justify-center bg-command-950/70 text-sm text-slate-300">
               Loading Karnataka map tiles...
             </div>
           )}
-          {(mapError && !mapLoaded && firstValidHotspot) && (
-            <div className="absolute inset-6 flex items-center justify-center rounded-md border border-alert-high/40 bg-command-950/95 p-6 text-center shadow-glow">
-              <div>
-                <p className="text-lg font-semibold text-white">Map renderer failed, but hotspot data is available.</p>
-                <p className="mt-3 text-sm text-slate-300">{firstValidHotspot.district} - {firstValidHotspot.police_station}</p>
-                <p className="mt-1 text-sm text-slate-300">Crime count: {firstValidHotspot.crime_count}</p>
-                <p className="mt-1 text-sm text-slate-300">Risk: {firstValidHotspot.risk_level}</p>
-                <p className="mt-1 text-sm text-slate-300">Coordinates: {hotspotLatitude(firstValidHotspot)}, {hotspotLongitude(firstValidHotspot)}</p>
-                <p className="mt-3 text-xs text-alert-high">{mapError}</p>
-              </div>
-            </div>
-          )}
+          {mapError && !mapLoaded && <div className="absolute bottom-4 left-4 right-4 z-20 border border-alert-high/40 bg-command-950/95 px-4 py-3 text-sm text-alert-high">Map renderer failed, but real hotspot intelligence remains visible in tactical fallback mode. {mapError}</div>}
           {points.length === 0 && hasData && (
             <div className="absolute bottom-4 left-4 right-4 rounded border border-command-700 bg-command-900/90 px-4 py-3 text-sm text-slate-300">
               No individual point markers match this view. District intensity centroids remain active.

@@ -50,7 +50,12 @@ function normalizeRecord(row) {
     arrested_count: toNumber(value(row, "arrested_count")),
     conviction_count: toNumber(value(row, "conviction_count")),
     unit_id: clean(value(row, "unit_id")),
-    created_time: clean(value(row, "created_time"))
+    created_time: clean(value(row, "created_time")),
+    dataset_id: clean(value(row, "dataset_id")),
+    dataset_name: clean(value(row, "dataset_name")),
+    upload_id: clean(value(row, "upload_id")),
+    source_file_name: clean(value(row, "source_file_name")),
+    imported_at: clean(value(row, "imported_at"))
   };
 }
 
@@ -67,6 +72,22 @@ async function fetchCrimeRecords(app, options = {}) {
   return options.filters ? applyFilters(normalized, options.filters) : normalized;
 }
 
+async function forEachCrimeRecordPage(app, filters = {}, pageSize = 500, callback) {
+  const size = Math.max(50, Math.min(Number(pageSize) || 500, 1000));
+  let offset = 0;
+  let processed = 0;
+  while (true) {
+    const result = await app.zcql().executeZCQLQuery(`SELECT * FROM ${CRIME_TABLE} LIMIT ${size} OFFSET ${offset}`);
+    const page = unwrapRows(result).map(normalizeRecord);
+    const filtered = applyFilters(page, filters);
+    if (filtered.length) await callback(filtered, { offset, processed });
+    processed += page.length;
+    if (page.length < size) break;
+    offset += size;
+  }
+  return processed;
+}
+
 function normalizeFilters(params = {}) {
   const pick = (key, fallback = "") => clean(params[key] ?? params[fallback]);
   return {
@@ -76,7 +97,8 @@ function normalizeFilters(params = {}) {
     police_station: pick("police_station"),
     crime_type: pick("crime_type"),
     severity: pick("severity"),
-    fir_stage: pick("fir_stage", "status")
+    fir_stage: pick("fir_stage", "status"),
+    dataset_id: pick("dataset_id")
   };
 }
 
@@ -95,6 +117,7 @@ function applyFilters(records, params = {}) {
     if (isActiveFilter(filters.crime_type) && record.crime_type !== filters.crime_type) return false;
     if (isActiveFilter(filters.severity) && record.severity !== filters.severity && record.severity_original !== filters.severity) return false;
     if (isActiveFilter(filters.fir_stage) && record.fir_stage !== filters.fir_stage) return false;
+    if (isActiveFilter(filters.dataset_id) && record.dataset_id !== filters.dataset_id) return false;
     return true;
   });
 }
@@ -441,6 +464,7 @@ module.exports = {
   detectAnomalies,
   discoverPatterns,
   fetchCrimeRecords,
+  forEachCrimeRecordPage,
   filterOptions,
   generateForecast,
   generateTimeMachine,

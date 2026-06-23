@@ -18,8 +18,8 @@ const CrimeTable = ({ records }: { records: CrimeRecord[] }) => {
       <div className="border-b border-command-700 px-5 py-4">
         <h2 className="text-base font-semibold text-white">Recent Crime Records</h2>
       </div>
-      <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-command-700 text-left text-sm">
+      <div className="table-scroll">
+        <table className="data-table min-w-full divide-y divide-command-700 text-left text-sm">
           <thead className="bg-command-850 text-xs uppercase text-slate-400">
             <tr>
               <th className="px-4 py-3">Crime ID</th>
@@ -39,11 +39,11 @@ const CrimeTable = ({ records }: { records: CrimeRecord[] }) => {
           <tbody className="divide-y divide-command-700/70">
             {records.map((record) => (
               <tr key={record.ROWID || record.crime_id} className="hover:bg-command-850/70">
-                <td className="whitespace-nowrap px-4 py-3 font-medium text-command-300">{record.crime_id}</td>
-                <td className="whitespace-nowrap px-4 py-3 text-slate-200">{record.district}</td>
-                <td className="whitespace-nowrap px-4 py-3 text-slate-300">{record.police_station}</td>
-                <td className="whitespace-nowrap px-4 py-3 text-slate-300">{record.crime_type}</td>
-                <td className="whitespace-nowrap px-4 py-3 text-slate-300">{record.crime_subtype}</td>
+                <td className="px-4 py-3 font-medium text-command-300" title={record.crime_id}>{record.crime_id}</td>
+                <td className="px-4 py-3 text-slate-200" title={record.district}>{record.district}</td>
+                <td className="px-4 py-3 text-slate-300" title={record.police_station}>{record.police_station}</td>
+                <td className="px-4 py-3 text-slate-300" title={record.crime_type}>{record.crime_type}</td>
+                <td className="px-4 py-3 text-slate-300" title={record.crime_subtype}>{record.crime_subtype}</td>
                 <td className="whitespace-nowrap px-4 py-3">
                   <span className={`rounded px-2 py-1 text-xs font-semibold ${severityClass[record.severity]}`}>
                     {record.severity}

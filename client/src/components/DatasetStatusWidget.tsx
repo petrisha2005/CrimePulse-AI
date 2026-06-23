@@ -15,14 +15,14 @@ const DatasetStatusWidget = ({ stats, compact = false }: DatasetStatusWidgetProp
 
   if (compact) {
     return (
-      <div className="hidden items-center gap-3 rounded-md border border-command-700 bg-command-850 px-3 py-2 text-xs xl:flex">
-        <Database className="h-4 w-4 text-command-300" />
-        <span className="text-slate-400">Dataset</span>
+      <div className="hidden max-w-[46rem] items-center gap-3 overflow-hidden rounded-md border border-command-700 bg-command-850 px-3 py-2 text-xs xl:flex">
+        <Database className="h-4 w-4 shrink-0 text-command-300" />
+        <span className="text-slate-400">Dataset:</span>
         <span className={hasData ? "text-command-300" : "text-alert-medium"}>{hasData ? `${formatNumber(stats?.total_records)} records` : "No records"}</span>
         {partialStats ? (
           <>
             <span className="text-slate-600">|</span>
-            <span className="text-alert-medium">{stats?.message || "analytics loading/unavailable"}</span>
+            <span className="max-w-40 truncate text-alert-medium" title={stats?.message || "analytics loading/unavailable"}>{stats?.message || "analytics loading/unavailable"}</span>
           </>
         ) : (
           <>
@@ -39,11 +39,11 @@ const DatasetStatusWidget = ({ stats, compact = false }: DatasetStatusWidgetProp
   }
 
   return (
-    <section className="rounded-md border border-command-700 bg-command-900/85 p-4 shadow-glow">
+    <section className="card-safe rounded-md border border-command-700 bg-command-900/85 p-4 shadow-glow">
       <div className="flex items-center justify-between gap-3">
-        <div>
+        <div className="min-w-0">
           <p className="text-xs uppercase tracking-[0.16em] text-command-300">Dataset Status</p>
-          <h2 className="mt-1 text-base font-semibold text-white">{hasData ? "Using uploaded Karnataka crime dataset" : "Waiting for uploaded crime data"}</h2>
+          <h2 className="text-safe mt-1 text-base font-semibold text-white">{hasData ? "Using uploaded Karnataka crime dataset" : "Waiting for uploaded crime data"}</h2>
         </div>
         <span className={`rounded border px-3 py-1 text-xs font-semibold ${hasData ? "border-alert-low/40 bg-alert-low/10 text-alert-low" : "border-alert-medium/40 bg-alert-medium/10 text-alert-medium"}`}>
           {hasData ? "Live Data" : "Empty"}

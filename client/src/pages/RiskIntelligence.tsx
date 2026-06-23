@@ -164,7 +164,7 @@ const RiskIntelligence = () => {
         </button>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-7">
+      <div className="stat-grid">
         <DashboardCard title="Records Analyzed" value={summary.total_records_analyzed} icon={Database} />
         <DashboardCard title="Critical Zones" value={summary.critical_zones} icon={AlertTriangle} tone="red" />
         <DashboardCard title="High Risk Zones" value={summary.high_risk_zones} icon={ShieldAlert} tone="orange" />

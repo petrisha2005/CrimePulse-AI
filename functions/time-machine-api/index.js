@@ -11,6 +11,8 @@ const {
 } = require("./crimeAnalytics");
 
 const SERVICE_NAME = "time-machine-api";
+const CRIME_TABLE = process.env.CRIME_TABLE || process.env.CRIME_RECORDS_TABLE || "CrimeRecords";
+const PAGE_SIZE = 200;
 const AVAILABLE_ROUTES = [
   "GET /",
   "GET /health",
@@ -21,6 +23,7 @@ const AVAILABLE_ROUTES = [
   "GET /time-machine/compare",
   "GET /time-machine/movement",
   "GET /time-machine/insights",
+  "GET /time-machine/period",
   "GET /time-machine/filters"
 ];
 const CORS_HEADERS = {
@@ -50,6 +53,67 @@ function query(req) {
 
 function clean(value) {
   return String(value ?? "").trim();
+}
+
+function unwrapRows(result) {
+  if (!result) return [];
+  if (Array.isArray(result)) return result;
+  if (Array.isArray(result.data)) return result.data;
+  if (Array.isArray(result.rows)) return result.rows;
+  return [];
+}
+
+function recordValue(row, key) {
+  return row?.[key] ?? row?.[CRIME_TABLE]?.[key] ?? row?.CrimeRecords?.[key] ?? "";
+}
+
+function normalizeCrimeRow(row) {
+  return {
+    ROWID: recordValue(row, "ROWID"),
+    crime_id: clean(recordValue(row, "crime_id")),
+    district: clean(recordValue(row, "district")),
+    police_station: clean(recordValue(row, "police_station")),
+    crime_type: clean(recordValue(row, "crime_type")),
+    crime_subtype: clean(recordValue(row, "crime_subtype")),
+    severity: clean(recordValue(row, "severity")) || "Low",
+    severity_original: clean(recordValue(row, "severity_original")),
+    fir_year: clean(recordValue(row, "fir_year")),
+    fir_month: clean(recordValue(row, "fir_month")),
+    fir_day: clean(recordValue(row, "fir_day")),
+    crime_date: clean(recordValue(row, "crime_date")),
+    latitude_value: clean(recordValue(row, "latitude_value")),
+    longitude_value: clean(recordValue(row, "longitude_value")),
+    fir_stage: clean(recordValue(row, "fir_stage")),
+    complaint_mode: clean(recordValue(row, "complaint_mode")),
+    victim_count: toNumber(recordValue(row, "victim_count")),
+    accused_count: toNumber(recordValue(row, "accused_count")),
+    arrested_count: toNumber(recordValue(row, "arrested_count")),
+    conviction_count: toNumber(recordValue(row, "conviction_count"))
+  };
+}
+
+async function fetchAllCrimeRecords(app) {
+  const allRows = [];
+  let offset = 0;
+  try {
+    while (true) {
+      const result = await app.zcql().executeZCQLQuery(`SELECT * FROM ${CRIME_TABLE} LIMIT ${PAGE_SIZE} OFFSET ${offset}`);
+      const rows = unwrapRows(result);
+      allRows.push(...rows);
+      if (rows.length < PAGE_SIZE) break;
+      offset += PAGE_SIZE;
+    }
+    return allRows.map(normalizeCrimeRow);
+  } catch (error) {
+    console.warn("[time-machine-api] paginated ZCQL failed; using Data Store fallback", error.message);
+    try {
+      const rows = unwrapRows(await app.datastore().table(CRIME_TABLE).getAllRows());
+      return rows.map(normalizeCrimeRow);
+    } catch (fallbackError) {
+      console.warn("[time-machine-api] Data Store fallback failed; using shared loader", fallbackError.message);
+      return fetchCrimeRecords(app, { limit: 5000 });
+    }
+  }
 }
 
 function pctChange(previous, current) {
@@ -138,12 +202,14 @@ function yearly(records) {
 }
 
 function monthly(records) {
+  const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
   const groups = groupBy(records, (record) => clean(record.fir_month) || "Unknown");
   const years = new Set(records.map((record) => clean(record.fir_year)).filter(Boolean)).size || 1;
   const rows = Object.entries(groups)
     .filter(([month]) => month !== "Unknown")
     .map(([month, scoped]) => ({
       month: String(Number(month)),
+      month_name: monthNames[Number(month) - 1] || "Unknown",
       total_crimes: scoped.length,
       average_per_year: Math.round(scoped.length / years),
       top_crime_type: topN(scoped, "crime_type", 1)[0]?.name || "No data",
@@ -153,7 +219,8 @@ function monthly(records) {
   const averageMonthCount = rows.length ? rows.reduce((sum, row) => sum + row.total_crimes, 0) / rows.length : 0;
   return rows.map((row) => ({
     ...row,
-    seasonal_risk_level: riskLevel(Math.round((row.total_crimes / Math.max(averageMonthCount, 1)) * 40))
+    seasonal_risk_level: riskLevel(Math.round((row.total_crimes / Math.max(averageMonthCount, 1)) * 40)),
+    risk_level: riskLevel(Math.round((row.total_crimes / Math.max(averageMonthCount, 1)) * 40))
   }));
 }
 
@@ -164,23 +231,35 @@ function summary(records) {
   const peak = line.reduce((best, item) => item.total_crimes > (best?.total_crimes || 0) ? item : best, null);
   const latest = line.at(-1);
   const previous = line.at(-2);
-  const crimeGrowth = movementItems(records, "crime_type").rising[0];
+  const crimeMovement = movementItems(records, "crime_type");
+  const crimeGrowth = crimeMovement.rising[0];
+  const crimeFalling = crimeMovement.declining[0];
+  const percentageChange = latest && previous ? pctChange(previous.total_crimes, latest.total_crimes) : 0;
   return {
     total_records: records.length,
     year_range: years.length ? `${Math.min(...years)}-${Math.max(...years)}` : "No data",
     month_range: months.length ? `${Math.min(...months)}-${Math.max(...months)}` : "No data",
     earliest_record: line[0]?.period || "No data",
     latest_record: latest?.period || "No data",
+    earliest_period: line[0]?.period || "No data",
+    latest_period: latest?.period || "No data",
+    peak_period: peak?.period || "No data",
+    peak_period_crimes: peak?.total_crimes || 0,
     peak_year: peak?.year || "No data",
     peak_month: peak?.month || "No data",
     fastest_growing_crime_type: crimeGrowth?.name || "No data",
-    trend_direction: latest && previous ? (latest.total_crimes > previous.total_crimes ? "Rising" : latest.total_crimes < previous.total_crimes ? "Falling" : "Stable") : "Stable",
-    total_periods_available: line.length
+    fastest_rising_crime_type: crimeGrowth?.name || "No data",
+    fastest_falling_crime_type: crimeFalling?.name || "No data",
+    most_active_district: topN(records, "district", 1)[0]?.name || "No data",
+    trend_direction: percentageChange > 5 ? "Increasing" : percentageChange < -5 ? "Decreasing" : "Stable",
+    percentage_change: percentageChange,
+    total_periods_available: line.length,
+    time_machine_summary: "Crime Time Machine compares FIR records across years and months to reveal when crime increased, reduced, peaked, and which categories changed most."
   };
 }
 
 function pickPeriodRecords(records, year, month) {
-  return records.filter((record) => clean(record.fir_year) === clean(year) && clean(record.fir_month) === String(Number(month)));
+  return records.filter((record) => clean(record.fir_year) === clean(year) && Number(record.fir_month) === Number(month));
 }
 
 function changeList(fromRecords, toRecords, field) {
@@ -214,10 +293,11 @@ function compare(records, params = {}) {
     to_total: toTotal,
     difference: toTotal - fromTotal,
     percentage_change: change,
-    trend: change > 5 ? "Rising" : change < -5 ? "Falling" : "Stable",
+    trend: change > 5 ? "Increased" : change < -5 ? "Reduced" : "Stable",
     changed_crime_types: crimeChanges.slice(0, 10),
     changed_districts: districtChanges.slice(0, 10),
     insight: `Crime volume changed from ${fromTotal} to ${toTotal}, a ${change}% movement.`,
+    explanation: `Crime ${change > 5 ? "increased" : change < -5 ? "reduced" : "remained stable"} by ${Math.abs(change)}% from ${fromYear}-${String(fromMonth).padStart(2, "0")} to ${toYear}-${String(toMonth).padStart(2, "0")}, mainly influenced by ${crimeChanges[0]?.name || "available crime categories"}.`,
     selected_period: toYear && toMonth ? `${toYear}-${String(toMonth).padStart(2, "0")}` : "No data",
     previous_period: fromYear && fromMonth ? `${fromYear}-${String(fromMonth).padStart(2, "0")}` : "No data",
     selected_total: toTotal,
@@ -270,8 +350,12 @@ function movement(records) {
     police_station_movement: station.all,
     rising_districts: district.rising,
     declining_districts: district.declining,
+    falling_districts: district.declining,
     rising_crime_types: crime.rising,
     declining_crime_types: crime.declining,
+    falling_crime_types: crime.declining,
+    rising_police_stations: station.rising,
+    falling_police_stations: station.declining,
     movement_patterns: movementPatterns
   };
 }
@@ -323,6 +407,54 @@ function insights(records) {
   return result;
 }
 
+function periodDetails(records, period) {
+  const line = timeline(records);
+  const isYearPeriod = /^\d{4}$/.test(clean(period));
+  const yearLine = yearly(records).map((item) => ({ ...item, period: item.year, month: "" }));
+  const source = isYearPeriod ? yearLine : line;
+  const index = source.findIndex((item) => item.period === period);
+  const active = index >= 0 ? source[index] : source[0];
+  const previous = index > 0 ? source[index - 1] : null;
+  const recordsFor = (item) => !item ? [] : isYearPeriod
+    ? records.filter((record) => clean(record.fir_year) === clean(item.year))
+    : pickPeriodRecords(records, item.year, item.month);
+  const scoped = recordsFor(active);
+  const previousRecords = recordsFor(previous);
+  const currentTotal = scoped.length;
+  const previousTotal = previousRecords.length;
+  const percentageChange = previous ? pctChange(previousTotal, currentTotal) : 0;
+  const topCrimeTypes = topN(scoped, "crime_type", 8);
+  const districts = topN(scoped, "district", 8);
+  const stations = topN(scoped, "police_station", 8);
+  const heinous = scoped.filter(isHeinous).length;
+  const nonHeinous = scoped.filter(isNonHeinous).length;
+  const other = Math.max(currentTotal - heinous - nonHeinous, 0);
+  const crimeChanges = changeList(previousRecords, scoped, "crime_type");
+  const topChange = crimeChanges.find((item) => item.change > 0);
+  const trend = percentageChange > 5 ? "Increasing" : percentageChange < -5 ? "Decreasing" : "Stable";
+  return {
+    period: active?.period || "No data",
+    previous_period: previous?.period || "No previous period",
+    total_crimes: currentTotal,
+    previous_total: previousTotal,
+    percentage_change: percentageChange,
+    trend_direction: trend,
+    top_crime_type: topCrimeTypes[0]?.name || "No data",
+    top_district: districts[0]?.name || "No data",
+    heinous_count: heinous,
+    top_crime_types: topCrimeTypes,
+    districts,
+    police_stations: stations,
+    severity_distribution: [
+      { name: "Heinous", value: heinous },
+      { name: "Non-Heinous", value: nonHeinous },
+      { name: "Other", value: other }
+    ],
+    coordinate_mode: scoped.length && scoped.every((record) => !hasCoordinates(record)) ? "District-level fallback" : "Exact / mixed coordinates",
+    insight: `Crime ${trend === "Increasing" ? "increased" : trend === "Decreasing" ? "decreased" : "remained stable"} by ${Math.abs(percentageChange)}% compared with ${previous?.period || "the prior available period"}. ${districts[0]?.name || "No district"} remained the most active district. ${topChange ? `${topChange.name} changed by ${topChange.change}% in this period.` : "Crime type movement is limited by the available period comparison."}`
+  };
+}
+
 module.exports = async (req, res) => {
   const method = req.method;
   const path = getPath(req, SERVICE_NAME);
@@ -337,16 +469,17 @@ module.exports = async (req, res) => {
   try {
     const app = catalyst.initialize(req);
     const params = query(req);
-    const allRecords = await fetchCrimeRecords(app);
+    const allRecords = await fetchAllCrimeRecords(app);
     const records = applyFilters(allRecords, params);
 
     if (method === "GET" && path === "/time-machine/summary") return send(res, 200, { success: true, data: summary(records) });
-    if (method === "GET" && path === "/time-machine/timeline") return send(res, 200, { success: true, data: { timeline: timeline(records) } });
+    if (method === "GET" && path === "/time-machine/timeline") return send(res, 200, { success: true, data: timeline(records) });
     if (method === "GET" && path === "/time-machine/yearly") return send(res, 200, { success: true, data: yearly(records) });
     if (method === "GET" && path === "/time-machine/monthly") return send(res, 200, { success: true, data: monthly(records) });
     if (method === "GET" && path === "/time-machine/compare") return send(res, 200, { success: true, data: compare(records, params) });
     if (method === "GET" && path === "/time-machine/movement") return send(res, 200, { success: true, data: movement(records) });
-    if (method === "GET" && path === "/time-machine/insights") return send(res, 200, { success: true, data: { insights: insights(records) } });
+    if (method === "GET" && path === "/time-machine/insights") return send(res, 200, { success: true, data: insights(records) });
+    if (method === "GET" && path === "/time-machine/period") return send(res, 200, { success: true, data: periodDetails(records, params.period) });
     if (method === "GET" && path === "/time-machine/filters") {
       return send(res, 200, {
         success: true,

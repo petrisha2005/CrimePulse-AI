@@ -14,6 +14,7 @@ import type {
 import { readJsonOrLocalFallback } from "./localFallback";
 
 const socioApiBase = import.meta.env.VITE_SOCIO_ECONOMIC_API_BASE || "/server/socio-economic-api";
+type ApiErrorPayload = { message?: string; error?: string; details?: string };
 
 const shouldSend = (value: unknown) => {
   if (value === undefined || value === null) return false;
@@ -33,7 +34,7 @@ const queryString = (filters: SocioEconomicFilters = {}) => {
 const request = async <T>(path: string, filters?: SocioEconomicFilters, options?: RequestInit): Promise<T> => {
   const response = await fetch(`${socioApiBase}${path}${queryString(filters)}`, options);
   if (!response.ok) {
-    const body = await readJsonOrLocalFallback<{ message?: string; error?: string; details?: string }>(response, path).catch(() => ({}));
+    const body: ApiErrorPayload = await readJsonOrLocalFallback<ApiErrorPayload>(response, path).catch(() => ({} as ApiErrorPayload));
     const parts = [body.message, body.error, body.details].filter(Boolean);
     throw new Error(parts.join(" | ") || `Socio-economic request failed with status ${response.status}`);
   }

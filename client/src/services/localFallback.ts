@@ -59,7 +59,10 @@ const emptyGlobalStats: GlobalStats = {
 const emptyAlertSummary: AlertSummary = {
   totalActiveAlerts: 0,
   criticalAlerts: 0,
+  highAlerts: 0,
+  mediumAlerts: 0,
   highRiskDistricts: 0,
+  districtsWithAlerts: 0,
   mostCommonAlertType: "No alerts",
   latestAlertTime: "No alerts"
 };

@@ -7,6 +7,7 @@ import StateBlock from "../components/StateBlock";
 import { alertService } from "../services/alertService";
 import { crimeService } from "../services/crimeService";
 import type { AlertCharts, AlertFilterOptions, AlertFilters, AlertSummary, RedZoneAlert } from "../types/crime";
+import { formatCompactDateTime } from "../utils/formatters";
 
 const emptyFilters: AlertFilters = { district: "All", police_station: "All", crime_type: "All", severity: "All", fir_stage: "All", alert_type: "All", fir_year: "All", fir_month: "All" };
 const emptyOptions: AlertFilterOptions = { districts: [], policeStations: [], crimeTypes: [], severities: [], statuses: [], alertTypes: [], years: [], months: [] };
@@ -17,6 +18,11 @@ const severityClass = {
   High: "border-alert-high/60 bg-alert-high/10 text-alert-high",
   Medium: "border-alert-medium/60 bg-alert-medium/10 text-alert-medium",
   Low: "border-alert-low/60 bg-alert-low/10 text-alert-low"
+};
+
+const humanizeAlertType = (value?: string) => {
+  const normalized = String(value || "No alerts").replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
+  return normalized.replace(/\b\w/g, (letter) => letter.toUpperCase());
 };
 
 const SelectFilter = ({ label, value, options, onChange }: { label: string; value?: string; options: string[]; onChange: (value: string) => void }) => (
@@ -36,11 +42,11 @@ const SelectFilter = ({ label, value, options, onChange }: { label: string; valu
 );
 
 const AlertCard = ({ alert }: { alert: RedZoneAlert }) => (
-  <article className={`rounded-md border bg-command-900/90 p-5 shadow-glow ${alert.severity === "Critical" ? "animate-pulse border-alert-critical" : "border-command-700"}`}>
+  <article className={`card-safe rounded-md border bg-command-900/90 p-5 shadow-glow ${alert.severity === "Critical" ? "animate-pulse border-alert-critical" : "border-command-700"}`}>
     <div className="flex items-start justify-between gap-3">
-      <div>
-        <h3 className="text-lg font-semibold text-white">{alert.title}</h3>
-        <p className="mt-1 text-sm text-slate-400">{alert.district}{alert.police_station ? ` / ${alert.police_station}` : ""}</p>
+      <div className="min-w-0 flex-1">
+        <h3 className="text-safe truncate-2 text-lg font-semibold text-white" title={alert.title}>{alert.title}</h3>
+        <p className="text-safe mt-1 text-sm text-slate-400">{alert.district}{alert.police_station ? ` / ${alert.police_station}` : ""}</p>
       </div>
       <span className={`rounded border px-2 py-1 text-xs font-semibold ${severityClass[alert.severity]}`}>{alert.severity}</span>
     </div>
@@ -50,8 +56,8 @@ const AlertCard = ({ alert }: { alert: RedZoneAlert }) => (
       <div className="rounded border border-command-700 bg-command-850 p-3 text-sm text-slate-300">Current: <span className="text-white">{alert.current_value}</span></div>
       <div className="rounded border border-command-700 bg-command-850 p-3 text-sm text-slate-300">Expected: <span className="text-white">{alert.expected_value}</span></div>
     </div>
-    <p className="mt-4 text-sm leading-6 text-slate-300">{alert.explanation}</p>
-    <p className="mt-3 rounded border border-command-700 bg-command-850 p-3 text-sm text-command-300">{alert.recommended_action}</p>
+    <p className="text-safe mt-4 text-sm leading-6 text-slate-300">{alert.explanation}</p>
+    <p className="text-safe mt-3 rounded border border-command-700 bg-command-850 p-3 text-sm text-command-300">{alert.recommended_action}</p>
   </article>
 );
 
@@ -215,14 +221,14 @@ const Alerts = () => {
         </div>
       </section>
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-7">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-7">
         <DashboardCard title="Total Active Alerts" value={summary?.totalActiveAlerts || 0} icon={BellRing} />
         <DashboardCard title="Critical Alerts" value={summary?.criticalAlerts || 0} icon={Siren} tone="red" />
         <DashboardCard title="High Alerts" value={summary?.highAlerts || 0} icon={Flame} tone="orange" />
         <DashboardCard title="Medium Alerts" value={summary?.mediumAlerts || 0} icon={ShieldAlert} />
         <DashboardCard title="High-Risk Districts" value={summary?.highRiskDistricts || 0} icon={MapPinned} tone="orange" />
-        <DashboardCard title="Most Common Alert Type" value={summary?.mostCommonAlertType || "No alerts"} icon={ShieldAlert} />
-        <DashboardCard title="Latest Alert Time" value={summary?.latestAlertTime ? new Date(summary.latestAlertTime).toLocaleString() : "No alerts"} icon={Clock} tone="green" />
+        <DashboardCard title="Most Common Alert" value={humanizeAlertType(summary?.mostCommonAlertType)} icon={ShieldAlert} compactValue />
+        <DashboardCard title="Latest Alert" value={formatCompactDateTime(summary?.latestAlertTime)} icon={Clock} tone="green" compactValue />
       </div>
 
       <section className="rounded-md border border-alert-critical/50 bg-command-900/85 p-5 shadow-glow">

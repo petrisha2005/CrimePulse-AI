@@ -31,13 +31,13 @@ const SelectFilter = ({ label, value, options, onChange }: { label: string; valu
 );
 
 const PatternCard = ({ pattern, onOpen }: { pattern: CrimePattern; onOpen: (pattern: CrimePattern) => void }) => (
-  <article className="rounded-md border border-command-700 bg-command-900/85 p-5 shadow-glow">
+  <article className="card-safe rounded-md border border-command-700 bg-command-900/85 p-5 shadow-glow">
     <div className="flex items-start justify-between gap-3">
-      <div>
-        <h3 className="text-lg font-semibold text-white">{pattern.title}</h3>
-        <p className="mt-1 text-sm text-command-300">{pattern.pattern_type}</p>
+      <div className="min-w-0 flex-1">
+        <h3 className="text-safe truncate-2 text-lg font-semibold text-white" title={pattern.title}>{pattern.title}</h3>
+        <p className="text-safe mt-1 text-sm text-command-300">{pattern.pattern_type}</p>
       </div>
-      <span className={`rounded border px-2 py-1 text-xs font-semibold ${severityClass[pattern.severity]}`}>{pattern.severity}</span>
+      <span className={`shrink-0 rounded border px-2 py-1 text-xs font-semibold ${severityClass[pattern.severity]}`}>{pattern.severity}</span>
     </div>
     <div className="mt-4 grid gap-2 text-sm sm:grid-cols-2">
       <div className="rounded border border-command-700 bg-command-850 p-2 text-slate-300">District: <span className="text-white">{pattern.district || "Statewide"}</span></div>
@@ -46,7 +46,7 @@ const PatternCard = ({ pattern, onOpen }: { pattern: CrimePattern; onOpen: (patt
       <div className="rounded border border-command-700 bg-command-850 p-2 text-slate-300">Crime Head: <span className="text-white">{pattern.crime_subtype || "N/A"}</span></div>
       <div className="rounded border border-command-700 bg-command-850 p-2 text-slate-300">Confidence: <span className="text-white">{pattern.confidence_score}%</span></div>
     </div>
-    <p className="mt-4 text-sm leading-6 text-slate-300">{pattern.explanation}</p>
+    <p className="text-safe mt-4 text-sm leading-6 text-slate-300">{pattern.explanation}</p>
     <button className="mt-4 flex items-center gap-2 rounded-md border border-command-700 px-3 py-2 text-sm text-command-300 hover:bg-command-850" onClick={() => onOpen(pattern)} type="button">
       <Eye className="h-4 w-4" />
       View Details
@@ -152,13 +152,13 @@ const PatternDiscovery = () => {
         </button>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
+      <div className="stat-grid">
         <DashboardCard title="Total Patterns Detected" value={summary.total_patterns_detected} icon={BrainCircuit} />
         <DashboardCard title="Critical Patterns" value={summary.critical_patterns} icon={Siren} tone="red" />
         <DashboardCard title="High Confidence" value={summary.high_confidence_patterns} icon={Target} tone="green" />
         <DashboardCard title="Most Affected District" value={summary.most_affected_district} icon={ShieldAlert} tone="orange" />
         <DashboardCard title="Repeated Crime Type" value={summary.most_repeated_crime_type} icon={Filter} />
-        <DashboardCard title="Latest Pattern" value={summary.latest_detected_pattern} icon={BrainCircuit} />
+        <DashboardCard title="Latest Pattern" value={summary.latest_detected_pattern} icon={BrainCircuit} valueClassName={summary.latest_detected_pattern.length > 28 ? "text-[clamp(1.2rem,1.6vw,1.7rem)]" : ""} />
       </div>
 
       <section className="rounded-md border border-command-700 bg-command-900/85 p-5 shadow-glow">
