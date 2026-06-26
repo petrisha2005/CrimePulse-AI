@@ -8,6 +8,9 @@ import type {
   ApiResponse
 } from "../types/crime";
 import { readJsonOrLocalFallback } from "./localFallback";
+import { crimeService } from "./crimeService";
+import { toAiInsightFilterOptions } from "../utils/dynamicFilterOptions";
+import { buildCacheKey, cachedApiFetch, CACHE_TTL } from "../utils/apiCache";
 
 const aiApiBase = import.meta.env.VITE_AI_API_BASE || "/server/ai-api";
 type ApiErrorPayload = { message?: string; error?: string; details?: string };
@@ -28,18 +31,22 @@ const queryString = (filters: AiInsightFilters = {}) => {
 };
 
 const request = async <T>(path: string, options?: RequestInit): Promise<T> => {
-  const response = await fetch(`${aiApiBase}${path}`, {
+  const method = String(options?.method || "GET").toUpperCase();
+  return cachedApiFetch<T>(buildCacheKey(`ai:${path}`, method === "GET" ? {} : { body: options?.body ? String(options.body) : "" }), `${aiApiBase}${path}`, {
     headers: options?.body instanceof FormData ? undefined : { "Content-Type": "application/json" },
-    ...options
+    ...options,
+    ttlMs: path.includes("filters") ? CACHE_TTL.filters : CACHE_TTL.ai,
+    forceRefresh: method !== "GET",
+    parseResponse: async (response) => {
+      if (!response.ok) {
+        const body: ApiErrorPayload = await readJsonOrLocalFallback<ApiErrorPayload>(response, path).catch(() => ({} as ApiErrorPayload));
+        const message = [body.message, body.error, body.details].filter(Boolean).join(" | ");
+        throw new Error(message || `AI request failed with status ${response.status}`);
+      }
+
+      return readJsonOrLocalFallback<T>(response, path);
+    }
   });
-
-  if (!response.ok) {
-    const body: ApiErrorPayload = await readJsonOrLocalFallback<ApiErrorPayload>(response, path).catch(() => ({} as ApiErrorPayload));
-    const message = [body.message, body.error, body.details].filter(Boolean).join(" | ");
-    throw new Error(message || `AI request failed with status ${response.status}`);
-  }
-
-  return readJsonOrLocalFallback<T>(response, path);
 };
 
 export const aiService = {
@@ -61,5 +68,5 @@ export const aiService = {
       body: JSON.stringify({ question, filters })
     }),
 
-  getFilters: () => request<ApiResponse<AiInsightFilterOptions>>("/ai/filters")
+  getFilters: async () => ({ success: true, data: toAiInsightFilterOptions((await crimeService.getCrimeRecordFilters()).data) } as ApiResponse<AiInsightFilterOptions>)
 };

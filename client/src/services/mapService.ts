@@ -8,6 +8,9 @@ import type {
   MapSummary
 } from "../types/crime";
 import { readJsonOrLocalFallback } from "./localFallback";
+import { crimeService } from "./crimeService";
+import { toMapFilterOptions } from "../utils/dynamicFilterOptions";
+import { buildCacheKey, cachedApiFetch, CACHE_TTL } from "../utils/apiCache";
 
 const mapApiBase = import.meta.env.VITE_MAP_API_BASE || "/server/map-api";
 type ApiErrorPayload = { message?: string; error?: string; details?: string };
@@ -28,13 +31,18 @@ const queryString = (filters: MapFilters = {}) => {
 };
 
 const request = async <T>(path: string, filters?: MapFilters): Promise<T> => {
-  const response = await fetch(`${mapApiBase}${path}${queryString(filters)}`);
-  if (!response.ok) {
-    const body: ApiErrorPayload = await readJsonOrLocalFallback<ApiErrorPayload>(response, path).catch(() => ({} as ApiErrorPayload));
-    const parts = [body.message, body.error, body.details].filter(Boolean);
-    throw new Error(parts.join(" | ") || `Map request failed with status ${response.status}`);
-  }
-  return readJsonOrLocalFallback<T>(response, path);
+  const endpoint = `${mapApiBase}${path}${queryString(filters)}`;
+  return cachedApiFetch<T>(buildCacheKey(`map:${path}`, filters), endpoint, {
+    ttlMs: path.includes("filters") ? CACHE_TTL.filters : CACHE_TTL.analytics,
+    parseResponse: async (response) => {
+      if (!response.ok) {
+        const body: ApiErrorPayload = await readJsonOrLocalFallback<ApiErrorPayload>(response, path).catch(() => ({} as ApiErrorPayload));
+        const parts = [body.message, body.error, body.details].filter(Boolean);
+        throw new Error(parts.join(" | ") || `Map request failed with status ${response.status}`);
+      }
+      return readJsonOrLocalFallback<T>(response, path);
+    }
+  });
 };
 
 export const mapService = {
@@ -44,5 +52,5 @@ export const mapService = {
   getPoliceStationIntensity: (filters?: MapFilters) => request<ApiResponse<CrimeHotspot[]>>("/map/police-station-intensity", filters),
   getHeatmap: (filters?: MapFilters) => request<ApiResponse<Array<{ latitude: number; longitude: number; weight: number; district: string; police_station: string; crime_type: string; coordinate_source: "original" | "district_fallback" | "karnataka_fallback" }>>>("/map/heatmap", filters),
   getSummary: (filters?: MapFilters) => request<ApiResponse<MapSummary>>("/map/summary", filters),
-  getFilters: () => request<ApiResponse<MapFilterOptions>>("/map/filters")
+  getFilters: async () => ({ success: true, data: toMapFilterOptions((await crimeService.getCrimeRecordFilters()).data) } as ApiResponse<MapFilterOptions>)
 };

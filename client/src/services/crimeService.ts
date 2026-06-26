@@ -1,5 +1,6 @@
 import type { ApiResponse, CrimeCount, CrimeDataset, CrimeRecord, CrimeRecordFilterOptions, CrimeRecordQuery, UploadSummary } from "../types/crime";
 import Papa from "papaparse";
+import { buildCacheKey, cachedApiFetch, CACHE_TTL, invalidateCrimePulseCache } from "../utils/apiCache";
 
 export interface CrimeFilters {
   district?: string;
@@ -29,25 +30,43 @@ const catalystNotMountedMessage =
   "Catalyst Functions are not connected in this preview. Run `catalyst serve` from the project root so uploads can be inserted into the Catalyst Data Store.";
 
 const request = async <T>(url: string, options?: RequestInit): Promise<T> => {
-  const response = await fetch(url, {
+  const method = String(options?.method || "GET").toUpperCase();
+  return cachedApiFetch<T>(buildCacheKey(`crime:${url}`, method === "GET" ? {} : { body: options?.body ? String(options.body) : "" }), url, {
     headers: {
       "Content-Type": "application/json",
       ...(options?.headers || {})
     },
-    ...options
+    ...options,
+    ttlMs: url.includes("/filters") ? CACHE_TTL.filters : url.includes("/crimes?") || url.endsWith("/crimes") ? CACHE_TTL.records : CACHE_TTL.analytics,
+    forceRefresh: method !== "GET",
+    parseResponse: async (response) => {
+      const contentType = response.headers.get("content-type") || "";
+
+      if (!contentType.includes("application/json")) {
+        throw new Error(catalystNotMountedMessage);
+      }
+
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.message || `Request failed with status ${response.status}`);
+      }
+
+      return response.json() as Promise<T>;
+    }
   });
-  const contentType = response.headers.get("content-type") || "";
+};
 
-  if (!contentType.includes("application/json")) {
-    throw new Error(catalystNotMountedMessage);
+const getStoredScope = (): Record<string, string> => {
+  try {
+    const raw = localStorage.getItem("crimepulse_auth_user");
+    if (!raw) return {};
+    const user = JSON.parse(raw) as { accessScope?: { type?: string; district?: string; police_station?: string } };
+    if (user.accessScope?.type === "station") return { district: user.accessScope.district || "", police_station: user.accessScope.police_station || "" };
+    if (user.accessScope?.type === "district") return { district: user.accessScope.district || "" };
+  } catch {
+    // The unauthenticated or malformed-session case simply uses no scope.
   }
-
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    throw new Error(body.message || `Request failed with status ${response.status}`);
-  }
-
-  return response.json();
+  return {};
 };
 
 export const crimeService = {
@@ -94,6 +113,7 @@ export const crimeService = {
           };
           if (xhr.status >= 200 && xhr.status < 300) {
             onProgress?.(100);
+            invalidateCrimePulseCache();
             resolve(body);
             return;
           }
@@ -128,15 +148,21 @@ export const crimeService = {
   },
 
   async finishUploadSession(uploadId: string) {
-    return request<ApiResponse<UploadSummary>>(`${crimeApiBase}/crimes/upload-session/finish`, { method: "POST", body: JSON.stringify({ upload_id: uploadId }) });
+    const response = await request<ApiResponse<UploadSummary>>(`${crimeApiBase}/crimes/upload-session/finish`, { method: "POST", body: JSON.stringify({ upload_id: uploadId }) });
+    invalidateCrimePulseCache();
+    return response;
   },
 
   async clearAllCrimeRecords() {
-    return request<ApiResponse<{ deleted_rows: number; totalRecords: number; message: string }>>(`${crimeApiBase}/crimes/clear-all`, { method: "POST", body: JSON.stringify({ confirmation: "RESET" }) });
+    const response = await request<ApiResponse<{ deleted_rows: number; totalRecords: number; message: string }>>(`${crimeApiBase}/crimes/clear-all`, { method: "POST", body: JSON.stringify({ confirmation: "RESET" }) });
+    invalidateCrimePulseCache();
+    return response;
   },
 
   async clearCrimeRecordsBatch(batchSize = 200) {
-    return request<ApiResponse<{ deleted_rows: number; remaining_records: number; done: boolean }>>(`${crimeApiBase}/crimes/clear-batch`, { method: "POST", body: JSON.stringify({ confirmation: "RESET", batch_size: batchSize }) });
+    const response = await request<ApiResponse<{ deleted_rows: number; remaining_records: number; done: boolean }>>(`${crimeApiBase}/crimes/clear-batch`, { method: "POST", body: JSON.stringify({ confirmation: "RESET", batch_size: batchSize }) });
+    invalidateCrimePulseCache();
+    return response;
   },
 
   async uploadCrimeCSVInBatches(file: File, mapping: Record<string, string>, uploadMode: "insert_new" | "skip_duplicates" | "replace", options: { importLimit: number | null; signal?: AbortSignal; importMode: "append" | "replace" | "new_dataset"; datasetName: string; confirmReplace?: boolean; onProgress?: (state: { phase: "Starting" | "Parsing" | "Uploading" | "Finishing"; parsedRows: number; uploadedBatches: number; insertedRows: number; failedRows: number; skippedDuplicates: number }) => void }) {
@@ -285,11 +311,19 @@ export const crimeService = {
     return request<ApiResponse<{ deleted_records: number }>>(`${crimeApiBase}/datasets/${encodeURIComponent(datasetId)}`, {
       method: "DELETE",
       body: JSON.stringify({ confirmation: "DELETE" })
+    }).then((response) => {
+      invalidateCrimePulseCache();
+      return response;
     });
   },
 
-  getCrimeRecordFilters() {
-    return request<ApiResponse<CrimeRecordFilterOptions>>(`${crimeApiBase}/crimes/filters`);
+  getCrimeRecordFilters(filters: Record<string, string | undefined> = {}) {
+    const params = new URLSearchParams();
+    Object.entries({ ...filters, ...getStoredScope() }).forEach(([key, value]) => {
+      if (shouldSend(value)) params.set(key, String(value));
+    });
+    const suffix = params.toString() ? `?${params.toString()}` : "";
+    return request<ApiResponse<CrimeRecordFilterOptions>>(`${crimeApiBase}/crimes/filters${suffix}`);
   },
 
   getCrimeRecordByRowId(rowId: string) {
@@ -299,7 +333,7 @@ export const crimeService = {
   getFilteredCrimeRecords(filters: CrimeFilters) {
     const params = new URLSearchParams();
     Object.entries(filters).forEach(([key, value]) => {
-      if (value) params.set(key, value);
+      if (shouldSend(value)) params.set(key, value);
     });
     return request<ApiResponse<CrimeRecord[]>>(`${crimeApiBase}/crimes/filter?${params.toString()}`);
   },
@@ -308,6 +342,9 @@ export const crimeService = {
     return request<ApiResponse<CrimeRecord>>(`${crimeApiBase}/crimes`, {
       method: "POST",
       body: JSON.stringify(record)
+    }).then((response) => {
+      invalidateCrimePulseCache();
+      return response;
     });
   }
 };

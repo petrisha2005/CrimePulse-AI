@@ -13,6 +13,9 @@ import type {
   RiskPriorityZone
 } from "../types/crime";
 import { readJsonOrLocalFallback } from "./localFallback";
+import { crimeService } from "./crimeService";
+import { toDashboardFilterOptions } from "../utils/dynamicFilterOptions";
+import { buildCacheKey, cachedApiFetch, CACHE_TTL } from "../utils/apiCache";
 
 const riskApiBase = import.meta.env.VITE_RISK_API_BASE || "/server/risk-api";
 type ApiErrorPayload = { message?: string; error?: string; details?: string; path?: string };
@@ -35,13 +38,18 @@ const queryString = (filters: RiskFilters = {}) => {
 };
 
 const request = async <T>(path: string, filters?: RiskFilters): Promise<T> => {
-  const response = await fetch(`${riskApiBase}${path}${queryString(filters)}`);
-  if (!response.ok) {
-    const body: ApiErrorPayload = await readJsonOrLocalFallback<ApiErrorPayload>(response, path).catch(() => ({} as ApiErrorPayload));
-    const detail = [body.message, body.error, body.details].filter(Boolean).join(" | ");
-    throw new Error(`Endpoint failed: ${body.path || path}. ${detail || `Risk request failed with status ${response.status}`}`);
-  }
-  return readJsonOrLocalFallback<T>(response, path);
+  const endpoint = `${riskApiBase}${path}${queryString(filters)}`;
+  return cachedApiFetch<T>(buildCacheKey(`risk:${path}`, filters), endpoint, {
+    ttlMs: path.includes("filters") ? CACHE_TTL.filters : CACHE_TTL.analytics,
+    parseResponse: async (response) => {
+      if (!response.ok) {
+        const body: ApiErrorPayload = await readJsonOrLocalFallback<ApiErrorPayload>(response, path).catch(() => ({} as ApiErrorPayload));
+        const detail = [body.message, body.error, body.details].filter(Boolean).join(" | ");
+        throw new Error(`Endpoint failed: ${body.path || path}. ${detail || `Risk request failed with status ${response.status}`}`);
+      }
+      return readJsonOrLocalFallback<T>(response, path);
+    }
+  });
 };
 
 export const riskService = {
@@ -57,7 +65,7 @@ export const riskService = {
     request<ApiResponse<string[]>>(`/risk/why/${encodeURIComponent(district)}`, filters),
   getRecommendations: (district: string, filters?: RiskFilters) =>
     request<ApiResponse<string[]>>(`/risk/recommendations/${encodeURIComponent(district)}`, filters),
-  getFilters: () => request<ApiResponse<DashboardFilterOptions>>("/risk/filters"),
+  getFilters: async () => ({ success: true, data: toDashboardFilterOptions((await crimeService.getCrimeRecordFilters()).data) } as ApiResponse<DashboardFilterOptions>),
   getSummary: (filters?: RiskFilters) => request<ApiResponse<unknown>>("/risk/summary", filters),
   getRiskIntelligenceSummary: (filters?: RiskFilters) => request<ApiResponse<RiskIntelligenceSummary>>("/risk-intelligence/summary", filters),
   getRiskDistricts: (filters?: RiskFilters) => request<ApiResponse<RiskDistrictRanking[]>>("/risk-intelligence/district-risk", filters),
@@ -66,5 +74,5 @@ export const riskService = {
   getPriorityZones: (filters?: RiskFilters) => request<ApiResponse<RiskPriorityZone[]>>("/risk-intelligence/priority-zones", filters),
   getRiskFactors: (filters?: RiskFilters) => request<ApiResponse<RiskFactor[]>>("/risk-intelligence/risk-factors", filters),
   getInterventionPlan: (filters?: RiskFilters) => request<ApiResponse<RiskInterventionPlan[]>>("/risk-intelligence/intervention-plan", filters),
-  getRiskIntelligenceFilters: () => request<ApiResponse<DashboardFilterOptions>>("/risk-intelligence/filters")
+  getRiskIntelligenceFilters: async () => ({ success: true, data: toDashboardFilterOptions((await crimeService.getCrimeRecordFilters()).data) } as ApiResponse<DashboardFilterOptions>)
 };

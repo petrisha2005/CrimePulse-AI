@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Download, Eye, FileBarChart, FileText, Loader2, Printer, RefreshCw, ShieldCheck, Sparkles, Trash2 } from "lucide-react";
 import DashboardCard from "../components/DashboardCard";
 import StateBlock from "../components/StateBlock";
@@ -8,15 +8,17 @@ import { getScopeLabel } from "../auth/accessScope";
 import { crimeService } from "../services/crimeService";
 import { reportService, type ReportSummary } from "../services/reportService";
 import type { GeneratedReportResponse, ReportRequest } from "../types/crime";
+import { downloadReportPdf, reportDownloadFilename } from "../utils/reportPdf";
 
 const HISTORY_KEY = "crimepulse_generated_reports";
 const reportTemplates = [
-  { type: "executive-summary", title: "Executive Summary", description: "A command-ready overview of crime volume, risk and operational priorities.", sections: "Overview, key findings, actions" },
-  { type: "district-report", title: "District Report", description: "District-level crime volume, station concentration and prevention focus.", sections: "District risk, stations, crime types" },
-  { type: "risk-report", title: "Risk Report", description: "Risk signals, severity mix and investigation gaps.", sections: "Risk factors, legal gap, actions" },
-  { type: "hotspot-report", title: "Hotspot Report", description: "Spatial readiness, hotspots and patrol recommendations.", sections: "Hotspots, geo quality, deployment" },
-  { type: "forecast-report", title: "Forecast Report", description: "Historical trend signals and decision-support outlook.", sections: "Trend, emerging risk, prevention" },
-  { type: "full-intelligence-report", title: "Full Intelligence Report", description: "Comprehensive crime intelligence document for operational review.", sections: "All analytics, findings, recommendations" }
+  { type: "executive-summary", title: "Executive Summary Report", description: "Short leadership briefing with key findings, top risk areas and actions.", sections: "Executive summary, scope, findings, actions" },
+  { type: "full-intelligence-report", title: "Full Intelligence Report", description: "Comprehensive operational report across all analytics dimensions.", sections: "Dashboard, risk, alerts, trends, geo, case progress" },
+  { type: "district-report", title: "District Risk Report", description: "District and station risk analysis for deployment planning.", sections: "District scope, station ranking, severity, actions" },
+  { type: "red-zone-alerts-report", title: "Red-Zone Alerts Report", description: "Urgent anomaly and red-zone operational response report.", sections: "Alerts, anomalies, spike evidence, priority actions" },
+  { type: "hotspot-map-report", title: "Hotspot Map Report", description: "Geo-intelligence report with coordinate coverage and fallback mapping.", sections: "Geo coverage, hotspots, clusters, map limitations" },
+  { type: "crime-trend-forecast-report", title: "Crime Trend & Forecast Report", description: "Time trend and forecast planning report.", sections: "Year trend, month trend, peak periods, prevention" },
+  { type: "fir-stage-case-progress-report", title: "FIR Stage / Case Progress Report", description: "Investigation progress and resolution-gap report.", sections: "FIR stage, arrests, convictions, follow-up" }
 ];
 
 type StoredReport = GeneratedReportResponse & { ai_mode?: string };
@@ -52,12 +54,15 @@ const printReport = (report: StoredReport) => {
 
 const Reports = () => {
   const { currentUser, scopeParams, preferences, hasPermission } = useAuth();
+  const selectedReportRef = useRef<HTMLDivElement | null>(null);
   const [storedCount, setStoredCount] = useState(0);
   const [summary, setSummary] = useState<ReportSummary | null>(null);
   const [history, setHistory] = useState<StoredReport[]>([]);
   const [selected, setSelected] = useState<StoredReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState("");
+  const [pdfGenerating, setPdfGenerating] = useState("");
+  const [pdfMessage, setPdfMessage] = useState("");
   const [error, setError] = useState("");
 
   const lastGenerated = useMemo(() => history[0] || null, [history]);
@@ -114,7 +119,21 @@ const Reports = () => {
     if (selected?.report_id === reportId) setSelected(null);
   };
 
-  if (loading) return <div className="space-y-5"><div className="h-24 animate-pulse bg-command-900" /><div className="grid gap-4 md:grid-cols-3">{[1, 2, 3, 4, 5, 6].map((item) => <div key={item} className="h-28 animate-pulse bg-command-900" />)}</div></div>;
+  const handleDownloadPdf = async (report: StoredReport) => {
+    try {
+      setPdfGenerating(report.report_id);
+      setPdfMessage("Generating PDF...");
+      await downloadReportPdf(report);
+      setPdfMessage("PDF downloaded successfully.");
+    } catch (err) {
+      console.error("[Reports] PDF generation failed", err);
+      setPdfMessage("PDF generation failed. Please use Print Report as fallback.");
+    } finally {
+      setPdfGenerating("");
+    }
+  };
+
+  if (loading) return <StateBlock title="Loading Reports Center" message="Retrieving cached report summary if available." />;
 
   return (
     <div className="space-y-6">
@@ -136,13 +155,13 @@ const Reports = () => {
         <DashboardCard title="Export Options" value="HTML / MD / PDF" icon={Download} />
       </div>
 
-      <section className="border border-command-700 bg-command-900/85 p-5 shadow-glow"><h2 className="font-semibold text-white">Quick Report Actions</h2><div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">{["executive-summary", "district-report", "hotspot-report", "forecast-report", "full-intelligence-report"].map((type) => <button key={type} disabled={Boolean(generating) || !hasPermission("GENERATE_REPORTS")} className="flex min-h-16 items-center justify-center gap-2 border border-command-700 bg-command-850 px-3 text-sm font-semibold text-slate-200 hover:border-command-300 hover:text-white disabled:opacity-60" onClick={() => generate(type)} type="button">{generating === type ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}{generating === type ? "Generating..." : `Generate ${reportTemplates.find((item) => item.type === type)?.title}`}</button>)}</div></section>
+      <section className="border border-command-700 bg-command-900/85 p-5 shadow-glow"><h2 className="font-semibold text-white">Quick Report Actions</h2><div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">{reportTemplates.map((template) => <button key={template.type} disabled={Boolean(generating) || !hasPermission("GENERATE_REPORTS")} className="flex min-h-16 items-center justify-center gap-2 border border-command-700 bg-command-850 px-3 text-sm font-semibold text-slate-200 hover:border-command-300 hover:text-white disabled:opacity-60" onClick={() => generate(template.type)} type="button">{generating === template.type ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}{generating === template.type ? "Generating..." : `Generate ${template.title}`}</button>)}</div></section>
 
       <section className="border border-command-700 bg-command-900/85 p-5 shadow-glow"><h2 className="font-semibold text-white">Report Templates</h2><div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">{reportTemplates.map((template) => <article key={template.type} className="border border-command-700 bg-command-850 p-4"><h3 className="font-semibold text-white">{template.title}</h3><p className="mt-2 text-sm text-slate-400">{template.description}</p><p className="mt-3 text-xs text-command-300">Includes: {template.sections}</p><button className="mt-4 flex min-h-10 items-center gap-2 bg-command-500 px-3 text-sm font-semibold text-white hover:bg-command-300 hover:text-command-950 disabled:opacity-60" disabled={Boolean(generating) || !hasPermission("GENERATE_REPORTS")} onClick={() => generate(template.type)} type="button">{generating === template.type ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}Generate</button></article>)}</div></section>
 
-      <MotionSection><section className="border border-command-700 bg-command-900/85 p-5 shadow-glow"><h2 className="font-semibold text-white">Generated Reports History</h2>{history.length === 0 ? <AnimatedEmptyState icon="📋" title="No Reports Generated Yet" description="Generate your first AI intelligence report from the AI Report Generator" /> : <div className="mt-4 space-y-3">{history.map((item, index) => <MotionCard key={item.report_id} delay={Math.min(index, 10) * 50} glowColor="cyan"><article className="grid gap-3 border border-command-700 bg-command-850 p-4 md:grid-cols-[1fr_auto]"><div><h3 className="font-semibold text-white">{item.title}</h3><p className="mt-2 font-mono text-[11px] text-slate-500">{item.report_type} · {new Date(item.generated_at).toLocaleString()} · {item.records_analyzed.toLocaleString()} records</p></div><div className="flex gap-2"><button title="View report" className="text-command-300 hover:text-white" onClick={() => setSelected(item)} type="button"><Eye className="h-4 w-4" /></button><button title="Download HTML" className="text-command-300 hover:text-white" onClick={() => downloadText(`${item.report_id}.html`, item.html, "text/html")} type="button"><Download className="h-4 w-4" /></button><button title="Delete report" className="text-alert-critical hover:text-white" onClick={() => removeReport(item.report_id)} type="button"><Trash2 className="h-4 w-4" /></button></div></article></MotionCard>)}</div>}</section></MotionSection>
+      <MotionSection><section className="border border-command-700 bg-command-900/85 p-5 shadow-glow"><h2 className="font-semibold text-white">Generated Reports History</h2>{history.length === 0 ? <AnimatedEmptyState icon="📋" title="No Reports Generated Yet" description="Generate your first AI intelligence report from the AI Report Generator" /> : <div className="mt-4 space-y-3">{history.map((item, index) => <MotionCard key={item.report_id} delay={Math.min(index, 10) * 50} glowColor="cyan"><article className="grid gap-3 border border-command-700 bg-command-850 p-4 md:grid-cols-[1fr_auto]"><div><h3 className="font-semibold text-white">{item.title}</h3><p className="mt-2 font-mono text-[11px] text-slate-500">{item.meta?.reportTypeLabel || item.report_type} · {new Date(item.generated_at).toLocaleString()} · {item.records_analyzed.toLocaleString()} records</p></div><div className="flex flex-wrap gap-2"><button title="View report" className="text-command-300 hover:text-white" onClick={() => setSelected(item)} type="button"><Eye className="h-4 w-4" /></button><button title="Download HTML" className="text-command-300 hover:text-white" onClick={() => downloadText(reportDownloadFilename(item, "html"), item.html, "text/html")} type="button"><Download className="h-4 w-4" /></button><button title="Print report" className="text-command-300 hover:text-white" onClick={() => printReport(item)} type="button"><Printer className="h-4 w-4" /></button><button title="Delete report" className="text-alert-critical hover:text-white" onClick={() => removeReport(item.report_id)} type="button"><Trash2 className="h-4 w-4" /></button></div></article></MotionCard>)}</div>}</section></MotionSection>
 
-      {selected && <section className="card-safe border border-command-700 bg-command-900/85 p-5 shadow-glow"><div className="flex flex-col justify-between gap-3 sm:flex-row"><div className="min-w-0"><p className="text-sm uppercase tracking-[0.16em] text-command-300">Report Preview</p><h2 className="text-safe mt-1 text-2xl font-semibold text-white">{selected.title}</h2><p className="text-safe mt-1 text-sm text-slate-400">Generated {new Date(selected.generated_at).toLocaleString()} | {selected.records_analyzed.toLocaleString()} records</p></div><div className="flex shrink-0 flex-wrap gap-2"><button className="border border-command-700 px-3 py-2 text-sm text-slate-200 hover:bg-command-850" onClick={() => printReport(selected)} type="button">Print / PDF</button><button className="border border-command-700 px-3 py-2 text-sm text-slate-200 hover:bg-command-850" onClick={() => setSelected(null)} type="button">Close</button></div></div><div className="mt-5 grid gap-4 lg:grid-cols-2"><div className="text-safe"><h3 className="font-semibold text-white">Key Findings</h3><ul className="mt-3 space-y-2 text-sm text-slate-300">{selected.key_findings.map((finding) => <li key={finding}>- {finding}</li>)}</ul></div><div className="text-safe"><h3 className="font-semibold text-white">Recommendations</h3><ul className="mt-3 space-y-2 text-sm text-command-300">{selected.recommendations.map((item) => <li key={item}>- {item}</li>)}</ul></div></div><div className="report-preview mt-5 max-h-[760px] overflow-auto border border-slate-200 bg-white p-6 text-slate-950"><div className="prose prose-slate max-w-none" dangerouslySetInnerHTML={{ __html: selected.html }} /></div></section>}
+      {selected && <section className="card-safe border border-command-700 bg-command-900/85 p-5 shadow-glow"><div className="flex flex-col justify-between gap-3 sm:flex-row"><div className="min-w-0"><p className="text-sm uppercase tracking-[0.16em] text-command-300">Report Preview</p><h2 className="text-safe mt-1 text-2xl font-semibold text-white">{selected.title}</h2><p className="text-safe mt-1 text-sm text-slate-400">Generated {new Date(selected.generated_at).toLocaleString()} | {selected.records_analyzed.toLocaleString()} records | {selected.meta?.reportTypeLabel || selected.report_type}</p></div><div className="flex shrink-0 flex-wrap gap-2"><button className="bg-command-500 px-3 py-2 text-sm font-semibold text-white hover:bg-command-300 hover:text-command-950 disabled:cursor-wait disabled:opacity-70" disabled={pdfGenerating === selected.report_id} onClick={() => handleDownloadPdf(selected)} type="button">{pdfGenerating === selected.report_id ? "Generating PDF..." : "Download PDF"}</button><button className="border border-command-700 px-3 py-2 text-sm text-slate-200 hover:bg-command-850" onClick={() => downloadText(reportDownloadFilename(selected, "html"), selected.html, "text/html")} type="button">Download HTML</button><button className="border border-command-700 px-3 py-2 text-sm text-slate-200 hover:bg-command-850" onClick={() => downloadText(reportDownloadFilename(selected, "md"), selected.markdown, "text/markdown")} type="button">Download Markdown</button><button className="border border-command-700 px-3 py-2 text-sm text-slate-200 hover:bg-command-850" onClick={() => printReport(selected)} type="button">Print Report</button><button className="border border-command-700 px-3 py-2 text-sm text-slate-200 hover:bg-command-850" onClick={() => setSelected(null)} type="button">Close</button></div></div>{pdfMessage && <p className={`mt-3 text-sm ${pdfMessage.includes("failed") ? "text-alert-high" : "text-command-300"}`}>{pdfMessage}</p>}<div className="mt-5 grid gap-4 lg:grid-cols-2"><div className="text-safe"><h3 className="font-semibold text-white">Key Findings</h3><ul className="mt-3 space-y-2 text-sm text-slate-300">{selected.key_findings.map((finding) => <li key={finding}>- {finding}</li>)}</ul></div><div className="text-safe"><h3 className="font-semibold text-white">Recommendations</h3><ul className="mt-3 space-y-2 text-sm text-command-300">{selected.recommendations.map((item) => <li key={item}>- {item}</li>)}</ul></div></div><div className="report-preview mt-5 max-h-[760px] overflow-auto border border-slate-200 bg-white p-6 text-slate-950"><div ref={selectedReportRef} className="report-print-content prose prose-slate max-w-none" dangerouslySetInnerHTML={{ __html: selected.html }} /></div></section>}
     </div>
   );
 };

@@ -3,7 +3,7 @@ const crypto = require("crypto");
 const { parse } = require("csv-parse");
 const { formidable } = require("formidable");
 const catalyst = require("zcatalyst-sdk-node");
-const { fetchCrimeRecords, filterOptions } = require("./crimeAnalytics");
+const { clearAnalyticsCache, fetchCrimeRecords, forEachCrimeRecordPage, filterOptions } = require("./crimeAnalytics");
 const { CANONICAL_FIELDS, detectMapping, mapCrimeRow } = require("./csvMapping");
 
 // Configure CRIME_RECORDS_TABLE in Catalyst Function environment variables if
@@ -146,6 +146,14 @@ const readJsonBody = (req) =>
 const getApp = (req) => catalyst.initialize(req);
 const getTable = (req) => getApp(req).datastore().table(CRIME_RECORDS_TABLE);
 const executeZcql = (req, query) => getApp(req).zcql().executeZCQLQuery(query);
+const invalidateAnalyticsCache = async (req, reason) => {
+  try {
+    const removed = await clearAnalyticsCache(getApp(req));
+    console.log("[crime-api] analytics cache invalidated", { reason, removed });
+  } catch (error) {
+    console.warn("[crime-api] analytics cache invalidation skipped", { reason, error: error.message });
+  }
+};
 
 const flatten = (value) => {
   if (value === null || value === undefined) return [];
@@ -428,13 +436,60 @@ const toClientRecord = (row) => ({
 });
 
 const getAllCrimes = async (req) => {
+  return fetchCrimeRecords(getApp(req));
+};
+
+const dynamicFilterFields = ["fir_year", "fir_month", "district", "police_station", "crime_type", "crime_subtype", "severity", "fir_stage", "complaint_mode", "beat_name", "village_area_name"];
+
+const sortFilterValues = (values) => [...values].filter(Boolean).sort((left, right) => {
+  const numericLeft = Number(left);
+  const numericRight = Number(right);
+  if (Number.isFinite(numericLeft) && Number.isFinite(numericRight)) return numericLeft - numericRight;
+  return String(left).localeCompare(String(right));
+});
+
+const getDynamicFilterOptions = async (req, params) => {
+  const scoped = {
+    fir_year: params.fir_year || params.year,
+    fir_month: params.fir_month || params.month,
+    district: params.selectedDistrict || params.district,
+    police_station: params.selectedPoliceStation || params.police_station,
+    crime_type: params.selectedCrimeType || params.crime_type,
+    severity: params.severity,
+    fir_stage: params.fir_stage || params.status
+  };
+  const values = Object.fromEntries(dynamicFilterFields.map((field) => [field, new Set()]));
   try {
-    return await fetchCrimeRecords(getApp(req), { limit: 5000 });
+    await forEachCrimeRecordPage(getApp(req), scoped, 500, async (records) => {
+      records.forEach((record) => dynamicFilterFields.forEach((field) => {
+        const value = String(record[field] || "").trim();
+        if (value) values[field].add(value);
+      }));
+    });
   } catch (error) {
-    console.error("[crime-api] shared fetch failed, falling back to getAllRows", error);
-    const rows = await getTable(req).getAllRows();
-    return rows.map(toClientRecord);
+    console.warn("[crime-api] paginated filter collection failed; using bounded fallback", error.message);
+    const records = filterCrimes(await getAllCrimes(req), scoped);
+    records.forEach((record) => dynamicFilterFields.forEach((field) => {
+      const value = String(record[field] || "").trim();
+      if (value) values[field].add(value);
+    }));
   }
+  const result = Object.fromEntries(dynamicFilterFields.map((field) => [field, sortFilterValues(values[field]) ]));
+  return {
+    ...result,
+    years: result.fir_year,
+    months: result.fir_month,
+    districts: result.district,
+    policeStations: result.police_station,
+    crimeTypes: result.crime_type,
+    crimeSubtypes: result.crime_subtype,
+    severities: result.severity,
+    statuses: result.fir_stage,
+    firStages: result.fir_stage,
+    complaintModes: result.complaint_mode,
+    beats: result.beat_name,
+    villages: result.village_area_name
+  };
 };
 
 const activeValue = (value) => {
@@ -673,14 +728,6 @@ const processUploadRows = async (req, session, rows, mapping, uploadMode, batchN
     session.valid_rows += 1;
     valid.push(result.record);
   });
-
-  // Replace is intentionally delayed until a valid batch is ready. This lets the client
-  // begin parsing immediately and avoids deleting records when the CSV cannot be imported.
-  if (session.import_mode === "replace" && !session.cleared_existing_records && valid.length > 0) {
-    console.log("[crime-api] clearing existing CrimeRecords before replace batch", batchNumber);
-    await clearAllCrimeRecords(req);
-    session.cleared_existing_records = true;
-  }
 
   const knownRows = await existingCrimeRows(req, valid.map((record) => record.crime_id), session.dataset_id);
   const updates = [];
@@ -943,6 +990,7 @@ module.exports = async (req, res) => {
       const body = await readJsonBody(req);
       if (body.confirmation !== "RESET") return send(res, 400, { success: false, message: "Enter confirmation: RESET before clearing CrimeRecords." });
       const deleted = await clearAllCrimeRecords(req);
+      await invalidateAnalyticsCache(req, "datasets-clear-all");
       return send(res, 200, { success: true, data: { deleted_records: deleted } });
     }
 
@@ -955,6 +1003,7 @@ module.exports = async (req, res) => {
       const body = await readJsonBody(req);
       if (body.confirmation !== "RESET") return send(res, 400, { success: false, message: "Enter confirmation: RESET before clearing CrimeRecords." });
       const deleted_rows = await clearAllCrimeRecords(req);
+      await invalidateAnalyticsCache(req, "crimes-clear-all");
       console.log("[crime-api] CrimeRecords cleared", { deleted_rows });
       return send(res, 200, { success: true, deleted_rows, totalRecords: 0, message: "CrimeRecords cleared successfully.", data: { deleted_rows, totalRecords: 0, message: "CrimeRecords cleared successfully." } });
     }
@@ -963,13 +1012,23 @@ module.exports = async (req, res) => {
       const body = await readJsonBody(req);
       if (body.confirmation !== "RESET") return send(res, 400, { success: false, message: "Enter confirmation: RESET before clearing CrimeRecords." });
       const result = await clearCrimeRecordsBatch(req, body.batch_size);
+      if (result.deleted_rows > 0 || result.done) await invalidateAnalyticsCache(req, "crimes-clear-batch");
       console.log("[crime-api] CrimeRecords clear batch complete", result);
-      return send(res, 200, { success: true, ...result, data: result });
+      return send(res, 200, {
+        success: true,
+        ...result,
+        deleted: result.deleted_rows,
+        remaining: result.remaining_records,
+        data: {
+          ...result,
+          deleted: result.deleted_rows,
+          remaining: result.remaining_records
+        }
+      });
     }
 
     if (req.method === "GET" && path.endsWith("/crimes/filters")) {
-      const crimes = await getAllCrimes(req);
-      const options = filterOptions(crimes);
+      const options = await getDynamicFilterOptions(req, Object.fromEntries(url.searchParams.entries()));
       return send(res, 200, {
         success: true,
         data: {
@@ -978,15 +1037,24 @@ module.exports = async (req, res) => {
           district: options.district,
           police_station: options.police_station,
           crime_type: options.crime_type,
+          crime_subtype: options.crime_subtype,
           severity: options.severity,
           fir_stage: options.fir_stage,
+          complaint_mode: options.complaint_mode,
+          beat_name: options.beat_name,
+          village_area_name: options.village_area_name,
           years: options.years,
           months: options.months,
           districts: options.districts,
           policeStations: options.policeStations,
           crimeTypes: options.crimeTypes,
+          crimeSubtypes: options.crimeSubtypes,
           severities: options.severities,
-          statuses: options.statuses
+          statuses: options.statuses,
+          firStages: options.firStages,
+          complaintModes: options.complaintModes,
+          beats: options.beats,
+          villages: options.villages
         }
       });
     }
@@ -1022,7 +1090,7 @@ module.exports = async (req, res) => {
 
     if (req.method === "POST" && path.endsWith("/crimes/upload-batch")) {
       const body = await readJsonBody(req);
-      const rows = Array.isArray(body.rows) ? body.rows : [];
+      const rows = Array.isArray(body.rows) ? body.rows : Array.isArray(body.records) ? body.records : [];
       const session = uploadSessions.get(body.upload_id);
       if (!session) return send(res, 404, { success: false, message: "Upload session not found or expired. Start a new upload session." });
       if (!rows.length) return send(res, 400, { success: false, message: "Upload batch contains no rows." });
@@ -1044,6 +1112,7 @@ module.exports = async (req, res) => {
       if (!session) return send(res, 404, { success: false, message: "Upload session not found or expired." });
       const result = await finalizeSessionSummary(req, session);
       uploadSessions.delete(body.upload_id);
+      await invalidateAnalyticsCache(req, "upload-session-finish");
       return send(res, 200, { success: true, data: result, ...result });
     }
 

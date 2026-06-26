@@ -12,6 +12,9 @@ import type {
   SocioEconomicVulnerabilityItem
 } from "../types/crime";
 import { readJsonOrLocalFallback } from "./localFallback";
+import { crimeService } from "./crimeService";
+import { toSocioEconomicFilterOptions } from "../utils/dynamicFilterOptions";
+import { buildCacheKey, cachedApiFetch, CACHE_TTL } from "../utils/apiCache";
 
 const socioApiBase = import.meta.env.VITE_SOCIO_ECONOMIC_API_BASE || "/server/socio-economic-api";
 type ApiErrorPayload = { message?: string; error?: string; details?: string };
@@ -32,13 +35,21 @@ const queryString = (filters: SocioEconomicFilters = {}) => {
 };
 
 const request = async <T>(path: string, filters?: SocioEconomicFilters, options?: RequestInit): Promise<T> => {
-  const response = await fetch(`${socioApiBase}${path}${queryString(filters)}`, options);
-  if (!response.ok) {
-    const body: ApiErrorPayload = await readJsonOrLocalFallback<ApiErrorPayload>(response, path).catch(() => ({} as ApiErrorPayload));
-    const parts = [body.message, body.error, body.details].filter(Boolean);
-    throw new Error(parts.join(" | ") || `Socio-economic request failed with status ${response.status}`);
-  }
-  return readJsonOrLocalFallback<T>(response, path);
+  const endpoint = `${socioApiBase}${path}${queryString(filters)}`;
+  const method = String(options?.method || "GET").toUpperCase();
+  return cachedApiFetch<T>(buildCacheKey(`socio:${path}`, filters), endpoint, {
+    ...options,
+    ttlMs: path.includes("filters") ? CACHE_TTL.filters : CACHE_TTL.analytics,
+    forceRefresh: method !== "GET",
+    parseResponse: async (response) => {
+      if (!response.ok) {
+        const body: ApiErrorPayload = await readJsonOrLocalFallback<ApiErrorPayload>(response, path).catch(() => ({} as ApiErrorPayload));
+        const parts = [body.message, body.error, body.details].filter(Boolean);
+        throw new Error(parts.join(" | ") || `Socio-economic request failed with status ${response.status}`);
+      }
+      return readJsonOrLocalFallback<T>(response, path);
+    }
+  });
 };
 
 export const socioEconomicService = {
@@ -58,7 +69,7 @@ export const socioEconomicService = {
     request<ApiResponse<SocioEconomicComparisonRow[]>>("/socio-economic/comparison", filters),
   getDistrict: (district: string, filters?: SocioEconomicFilters) =>
     request<ApiResponse<SocioEconomicComparisonRow | null>>(`/socio-economic/district/${encodeURIComponent(district)}`, filters),
-  getFilters: () => request<ApiResponse<SocioEconomicFilterOptions>>("/socio-economic/filters"),
+  getFilters: async () => ({ success: true, data: toSocioEconomicFilterOptions((await crimeService.getCrimeRecordFilters()).data) } as ApiResponse<SocioEconomicFilterOptions>),
   uploadCsv: async (file: File) => {
     const formData = new FormData();
     formData.append("file", file);

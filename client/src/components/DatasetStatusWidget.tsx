@@ -12,13 +12,20 @@ const DatasetStatusWidget = ({ stats, compact = false }: DatasetStatusWidgetProp
   const score = stats?.data_quality_score ?? 0;
   const hasData = (stats?.total_records ?? 0) > 0;
   const partialStats = hasData && stats?.partial;
+  const uploadedRecords = stats?.total_uploaded_records ?? stats?.total_records ?? 0;
+  const recordsAnalyzed = stats?.records_analyzed ?? stats?.total_records ?? 0;
+  const analysisLabel = stats?.is_sampled
+    ? `Sampled ${formatNumber(recordsAnalyzed)} / ${formatNumber(uploadedRecords)} records`
+    : `Analyzing ${formatNumber(recordsAnalyzed)} / ${formatNumber(uploadedRecords)} records`;
+  const cacheLabel = stats?.is_cached ? "Cached" : "Live";
 
   if (compact) {
     return (
       <div className="hidden max-w-[46rem] items-center gap-3 overflow-hidden rounded-md border border-command-700 bg-command-850 px-3 py-2 text-xs xl:flex">
         <Database className="h-4 w-4 shrink-0 text-command-300" />
         <span className="text-slate-400">Dataset:</span>
-        <span className={hasData ? "text-command-300" : "text-alert-medium"}>{hasData ? `${formatNumber(stats?.total_records)} records` : "No records"}</span>
+        <span className={hasData ? "text-command-300" : "text-alert-medium"}>{hasData ? analysisLabel : "No records"}</span>
+        {hasData && <span className="rounded border border-command-500/30 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-command-300">{cacheLabel}</span>}
         {partialStats ? (
           <>
             <span className="text-slate-600">|</span>
@@ -53,7 +60,8 @@ const DatasetStatusWidget = ({ stats, compact = false }: DatasetStatusWidgetProp
         <div className="rounded border border-command-700 bg-command-850 p-3">
           <Database className="h-4 w-4 text-command-300" />
           <p className="mt-2 text-xs text-slate-500">Crime Records</p>
-          <p className="text-lg font-semibold text-white">{formatNumber(stats?.total_records)}</p>
+          <p className="text-lg font-semibold text-white">{formatNumber(uploadedRecords)}</p>
+          {hasData && <p className="mt-1 text-[11px] text-command-300">{analysisLabel}</p>}
         </div>
         <div className="rounded border border-command-700 bg-command-850 p-3">
           <MapPinned className="h-4 w-4 text-command-300" />
@@ -79,7 +87,7 @@ const DatasetStatusWidget = ({ stats, compact = false }: DatasetStatusWidgetProp
           </p>
         </div>
       </div>
-      <p className="mt-3 text-xs text-slate-500">Last updated: {stats?.last_updated ? new Date(stats.last_updated).toLocaleString() : "Data not available"}</p>
+      <p className="mt-3 text-xs text-slate-500">Last updated: {stats?.cache_generated_at || stats?.last_updated ? new Date(stats.cache_generated_at || stats.last_updated).toLocaleString() : "Data not available"}{hasData ? ` · ${cacheLabel}` : ""}</p>
       {partialStats && <p className="mt-2 text-xs text-alert-medium">{stats?.message || "Analytics are temporarily unavailable, but stored records were found."}</p>}
     </section>
   );

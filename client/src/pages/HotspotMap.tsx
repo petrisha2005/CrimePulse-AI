@@ -2,8 +2,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import maplibregl, { GeoJSONSource, Map } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { Layers, MapPin, RadioTower, RefreshCw, ShieldAlert, Siren } from "lucide-react";
+import { ChevronLeft, ChevronRight, Filter, Layers, MapPin, RadioTower, RefreshCw, ShieldAlert, Siren } from "lucide-react";
 import DashboardCard from "../components/DashboardCard";
+import { RecommendedNextStep } from "../components/ModuleGuide";
 import StateBlock from "../components/StateBlock";
 import { crimeService } from "../services/crimeService";
 import { mapService } from "../services/mapService";
@@ -161,6 +162,33 @@ const optionList = (options: MapFilterOptions, primary: keyof MapFilterOptions, 
   return (Array.isArray(primaryValue) ? primaryValue : Array.isArray(fallbackValue) ? fallbackValue : []) as string[];
 };
 
+const activeFilterEntries = (filters: MapFilters) =>
+  Object.entries(filters).filter(([, value]) => {
+    const normalized = String(value ?? "").trim().toLowerCase();
+    return normalized !== "" && normalized !== "all";
+  });
+
+const activeFilterSummary = (filters: MapFilters) => {
+  const entries = activeFilterEntries(filters);
+  if (!entries.length) return "Filters: All years · All districts · All crime types";
+  const labelMap: Record<string, string> = {
+    fir_year: "Year",
+    fir_month: "Month",
+    district: "District",
+    police_station: "Station",
+    crime_type: "Crime",
+    severity: "Severity",
+    fir_stage: "Stage"
+  };
+  return `Filters: ${entries.map(([key, value]) => `${labelMap[key] || key}: ${value}`).join(" · ")}`;
+};
+
+const coordinateModeLabel = (summary: MapSummary | null, fallbackCount: number) => {
+  if (!summary) return "Unknown";
+  if ((summary.records_with_coordinates || 0) > 0 && fallbackCount > 0) return "Exact + fallback";
+  return fallbackCount > 0 ? "Fallback locations" : "Exact coordinates";
+};
+
 const getStoredCount = async () => {
   const response = await crimeService.getCrimeCount();
   return response.totalRecords ?? response.data?.totalRecords ?? 0;
@@ -191,8 +219,9 @@ const HotspotMap = () => {
   const [heatmapLayerFailed, setHeatmapLayerFailed] = useState(false);
   const [hotspotLayerRendered, setHotspotLayerRendered] = useState(false);
   const [storedCount, setStoredCount] = useState<number | null>(null);
+  const [filtersOpen, setFiltersOpen] = useState(() => (typeof window === "undefined" ? true : window.innerWidth >= 1024));
   const [layers, setLayers] = useState({
-    crimeMarkers: true,
+    crimeMarkers: false,
     districtHeat: false,
     hotspotCircles: true,
     redZonePulse: true,
@@ -202,17 +231,18 @@ const HotspotMap = () => {
   const hasData = (summary?.total_records || 0) > 0;
   const hasCoordinates = (summary?.records_with_coordinates || 0) > 0;
   const fallbackCount = summary?.records_using_fallback_coordinates ?? summary?.records_without_coordinates ?? 0;
+  const coordinateCoverage = summary?.coordinate_available_percentage ?? 0;
+  const lowCoordinateCoverage = coordinateCoverage < 50;
+  const noMapMatches = !hasData && (storedCount || 0) > 0 && !loading && !error;
 
   const popupHtml = (properties: Record<string, unknown>) => `
     <div style="color:#0f172a; min-width:220px">
-      <strong>${properties.district || "Unknown"}</strong><br/>
-      Station: ${properties.police_station || "N/A"}<br/>
-      Crime: ${properties.crime_type || properties.top_crime_type || properties.dominant_crime_type || "N/A"}<br/>
-      Count: ${properties.crime_count || 1}<br/>
-      Severity/Risk: ${properties.severity || properties.risk_level || properties.intensity_level || "N/A"}<br/>
-      Period: ${properties.date || properties.crime_date || "Current filter"}<br/>
-      Area: ${properties.location || "District centroid"}<br/>
-      Coordinate source: ${properties.coordinate_source || "district_fallback"}<br/>
+      <strong>${properties.police_station || "Police station not available"}</strong><br/>
+      District: ${properties.district || "Unknown"}<br/>
+      Crime count: ${properties.crime_count || properties.count || 1}<br/>
+      Top crime type: ${properties.crime_type || properties.top_crime_type || properties.dominant_crime_type || "N/A"}<br/>
+      Coordinate mode: ${properties.coordinate_source === "original" ? "exact" : "fallback"}<br/>
+      Risk level: ${properties.severity || properties.risk_level || properties.intensity_level || "N/A"}<br/>
       ${properties.recommended_action ? `<br/><em>${properties.recommended_action}</em>` : ""}
     </div>
   `;
@@ -315,9 +345,9 @@ const HotspotMap = () => {
     const updateSources = () => {
       if (!map.getSource("crime-points")) {
         map.addSource("crime-points", { type: "geojson", data: pointGeoJson, cluster: true, clusterRadius: 48 });
-        map.addLayer({ id: "clusters", type: "circle", source: "crime-points", filter: ["has", "point_count"], paint: { "circle-color": "#2e8bd8", "circle-radius": ["step", ["get", "point_count"], 18, 50, 26, 250, 34], "circle-opacity": 0.85 } });
-        map.addLayer({ id: "cluster-count", type: "symbol", source: "crime-points", filter: ["has", "point_count"], layout: { "text-field": ["get", "point_count_abbreviated"], "text-size": 12 }, paint: { "text-color": "#fff" } });
-        map.addLayer({ id: "crime-markers", type: "circle", source: "crime-points", filter: ["!", ["has", "point_count"]], paint: { "circle-color": ["match", ["get", "severity"], "High", "#f97316", "Critical", "#ef4444", "Medium", "#facc15", "#22c55e"], "circle-radius": ["case", ["!=", ["get", "coordinate_source"], "original"], 8, 5], "circle-stroke-width": ["case", ["!=", ["get", "coordinate_source"], "original"], 3, 1], "circle-stroke-color": ["case", ["!=", ["get", "coordinate_source"], "original"], "#94a3b8", "#fff"], "circle-opacity": ["case", ["!=", ["get", "coordinate_source"], "original"], 0.65, 0.9] } });
+        map.addLayer({ id: "clusters", type: "circle", source: "crime-points", filter: ["has", "point_count"], layout: { visibility: layers.stationClusters ? "visible" : "none" }, paint: { "circle-color": "#2e8bd8", "circle-radius": ["step", ["get", "point_count"], 18, 50, 26, 250, 34], "circle-opacity": 0.85 } });
+        map.addLayer({ id: "cluster-count", type: "symbol", source: "crime-points", filter: ["has", "point_count"], layout: { "text-field": ["get", "point_count_abbreviated"], "text-size": 12, visibility: layers.stationClusters ? "visible" : "none" }, paint: { "text-color": "#fff" } });
+        map.addLayer({ id: "crime-markers", type: "circle", source: "crime-points", filter: ["!", ["has", "point_count"]], layout: { visibility: layers.crimeMarkers ? "visible" : "none" }, paint: { "circle-color": ["match", ["get", "severity"], "High", "#f97316", "Critical", "#ef4444", "Medium", "#facc15", "#22c55e"], "circle-radius": ["case", ["!=", ["get", "coordinate_source"], "original"], 8, 5], "circle-stroke-width": ["case", ["!=", ["get", "coordinate_source"], "original"], 3, 1], "circle-stroke-color": ["case", ["!=", ["get", "coordinate_source"], "original"], "#94a3b8", "#fff"], "circle-opacity": ["case", ["!=", ["get", "coordinate_source"], "original"], 0.65, 0.9] } });
         map.on("click", "crime-markers", (event) => {
           const feature = event.features?.[0];
           if (!feature) return;
@@ -345,6 +375,7 @@ const HotspotMap = () => {
           id: "hotspot-pulse-rings",
           type: "circle",
           source: "hotspots",
+          layout: { visibility: layers.redZonePulse ? "visible" : "none" },
           paint: {
             "circle-color": ["match", ["get", "risk_level"], "Critical", "#ef4444", "#f97316"],
             "circle-radius": ["interpolate", ["linear"], ["coalesce", ["get", "intensity_score"], ["get", "crime_count"]], 1, 28, 80, 62],
@@ -356,6 +387,7 @@ const HotspotMap = () => {
           id: "hotspot-circles",
           type: "circle",
           source: "hotspots",
+          layout: { visibility: layers.hotspotCircles ? "visible" : "none" },
           paint: {
             "circle-color": ["match", ["get", "risk_level"], "Critical", "#ef4444", "High", "#f97316", "Medium", "#facc15", "#22c55e"],
             "circle-radius": ["interpolate", ["linear"], ["coalesce", ["get", "intensity_score"], ["get", "crime_count"]], 1, 16, 80, 42],
@@ -370,11 +402,13 @@ const HotspotMap = () => {
           type: "symbol",
           source: "hotspots",
           layout: {
-            "text-field": ["concat", ["get", "district"], "\n", ["get", "police_station"]],
-            "text-size": 12,
-            "text-offset": [0, 2.8],
+            "visibility": layers.hotspotCircles ? "visible" : "none",
+            "text-field": ["case", [">=", ["coalesce", ["get", "intensity_score"], ["get", "crime_count"]], 85], ["get", "district"], ""],
+            "text-size": 11,
+            "text-offset": [0, 2.4],
             "text-anchor": "top",
-            "text-allow-overlap": true
+            "text-allow-overlap": false,
+            "text-optional": true
           },
           paint: { "text-color": "#ffffff", "text-halo-color": "#06111f", "text-halo-width": 2 }
         });
@@ -436,14 +470,14 @@ const HotspotMap = () => {
     const setVisibility = (id: string, visible: boolean) => {
       if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", visible ? "visible" : "none");
     };
+    setVisibility("clusters", layers.stationClusters);
+    setVisibility("cluster-count", layers.stationClusters);
     setVisibility("crime-markers", layers.crimeMarkers);
     setVisibility("district-heat", layers.districtHeat);
     setVisibility("crime-heatmap-layer", layers.districtHeat);
     setVisibility("hotspot-pulse-rings", layers.redZonePulse);
     setVisibility("hotspot-circles", layers.hotspotCircles);
     setVisibility("hotspot-labels", layers.hotspotCircles);
-    setVisibility("clusters", layers.stationClusters);
-    setVisibility("cluster-count", layers.stationClusters);
   }, [layers, mapLoaded]);
 
   useEffect(() => {
@@ -452,10 +486,14 @@ const HotspotMap = () => {
     hotspotMarkers.current.forEach((marker) => marker.remove());
     hotspotMarkers.current = [];
     if (!layers.hotspotCircles && !layers.redZonePulse) return;
-    hotspots.forEach((hotspot) => {
+    [...hotspots]
+      .filter(isValidHotspotCoordinate)
+      .sort((a, b) => (b.crime_count || 0) - (a.crime_count || 0))
+      .slice(0, 12)
+      .forEach((hotspot) => {
       const element = document.createElement("button");
       element.type = "button";
-      element.style.width = `${Math.min(54, 18 + hotspot.crime_count)}px`;
+      element.style.width = `${Math.min(46, 16 + Math.sqrt(Math.max(hotspot.crime_count || 1, 1)) * 2)}px`;
       element.style.height = element.style.width;
       element.style.borderRadius = "999px";
       element.style.border = `2px solid ${riskColor[hotspot.risk_level]}`;
@@ -513,6 +551,16 @@ const HotspotMap = () => {
       </div>
     );
   }
+  if (noMapMatches) {
+    return (
+      <div className="space-y-4">
+        <StateBlock title="No map records match the selected filters." message="Clear filters to return to the full hotspot map." />
+        <button className="rounded-md bg-command-500 px-4 py-3 text-sm font-semibold text-white hover:bg-command-300 hover:text-command-950" onClick={() => { setFilters(emptyFilters); setAppliedFilters(emptyFilters); loadMapData(emptyFilters); }} type="button">
+          Clear Filters
+        </button>
+      </div>
+    );
+  }
   if (!hasData) return <StateBlock title="No crime data available" message="Upload CSV records first to activate the Hotspot Map." />;
 
   return (
@@ -529,21 +577,26 @@ const HotspotMap = () => {
       </div>
 
       <div className="stat-grid">
-        <DashboardCard title="Total Mapped Crimes" value={summary?.total_records || 0} icon={MapPin} />
-        <DashboardCard title="With Coordinates" value={summary?.records_with_coordinates || 0} icon={RadioTower} tone="green" />
-        <DashboardCard title="Fallback Coordinates" value={fallbackCount} icon={ShieldAlert} tone="orange" />
-        <DashboardCard title="Active Hotspots" value={summary?.hotspot_count || summary?.active_hotspots || 0} icon={Siren} tone="red" />
-        <DashboardCard title="Highest Intensity District" value={summary?.highest_intensity_district || summary?.highest_risk_district || "No data"} icon={Layers} />
-        <DashboardCard title="Common Mapped Crime" value={summary?.most_common_mapped_crime_type || "No data"} icon={ShieldAlert} tone="orange" />
+        <DashboardCard title="Records analyzed" value={summary?.total_records || 0} icon={MapPin} />
+        <DashboardCard title="Hotspot clusters" value={summary?.hotspot_count || summary?.active_hotspots || hotspots.length || 0} icon={Siren} tone="red" />
+        <DashboardCard title="Highest risk" value={summary?.highest_intensity_district || summary?.highest_risk_district || hotspots[0]?.district || "No data"} icon={Layers} />
+        <DashboardCard title="Coordinate coverage" value={`${coordinateCoverage}%`} icon={RadioTower} tone="green" />
+        <DashboardCard title="Coordinate mode" value={coordinateModeLabel(summary, fallbackCount)} icon={ShieldAlert} tone="orange" />
       </div>
 
       <section className="rounded-md border border-command-700 bg-command-900/85 p-4 text-sm text-slate-300 shadow-glow">
-        {fallbackCount > 0
-          ? "Exact coordinates are unavailable for this dataset. Showing district-level hotspot using centroid fallback."
-          : "All plotted records in this view include exact coordinates."}
-        {!hasCoordinates && " No exact coordinate records were found, so the map is using district-level fallback hotspots."}
-        {summary?.coordinate_available_percentage !== undefined ? ` Coordinate availability: ${summary.coordinate_available_percentage}%.` : ""}
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h2 className="text-base font-semibold text-white">Map Interpretation</h2>
+            <p className="mt-2 text-safe leading-6">
+              {coordinateCoverage}% of records have exact coordinates. Records without exact latitude/longitude are represented using police station or district fallback mapping.
+            </p>
+          </div>
+          {lowCoordinateCoverage && <span className="shrink-0 rounded border border-alert-medium/45 bg-alert-medium/10 px-3 py-1 text-xs font-semibold text-alert-medium">Low coordinate coverage</span>}
+        </div>
       </section>
+
+      <RecommendedNextStep title="Generate an Intelligence Report" description="Turn the hotspot and risk context into a shareable briefing with findings and recommended police actions." to="/reports-briefing" action="Generate Report" />
 
       <section className="grid gap-3 rounded-md border border-command-700 bg-command-900/85 p-4 text-xs text-slate-300 shadow-glow sm:grid-cols-2 xl:grid-cols-6">
         <div><span className="text-slate-500">API summary loaded:</span> {summary ? "yes" : "no"}</div>
@@ -563,11 +616,12 @@ const HotspotMap = () => {
         )}
       </section>
 
-      <div className="grid gap-6 xl:grid-cols-[340px_1fr]">
-        <aside className="space-y-5">
+      <div className={`grid gap-6 ${filtersOpen ? "xl:grid-cols-[320px_1fr]" : "xl:grid-cols-1"}`}>
+        {filtersOpen && <aside className="space-y-5">
           <section className="rounded-md border border-command-700 bg-command-900/85 p-5 shadow-glow">
             <h2 className="text-base font-semibold text-white">Filters</h2>
-            <div className="mt-4 space-y-4">
+            <p className="mt-3 text-xs leading-5 text-slate-500">Choose filters, then click Apply to update map clusters and summary cards.</p>
+            <div className="mt-4 space-y-3">
               <SelectFilter label="FIR Year" value={filters.fir_year} options={optionList(options, "years", "fir_year")} onChange={(value) => updateFilter("fir_year", value)} />
               <SelectFilter label="FIR Month" value={filters.fir_month} options={optionList(options, "months", "fir_month")} onChange={(value) => updateFilter("fir_month", value)} />
               <SelectFilter label="District" value={filters.district} options={optionList(options, "districts", "district")} onChange={(value) => updateFilter("district", value)} />
@@ -608,18 +662,20 @@ const HotspotMap = () => {
               </div>
             </div>
           </section>
-        </aside>
+        </aside>}
 
         <section className="hotspot-map-main relative min-h-[720px] overflow-hidden rounded-md border border-command-500/30 bg-[#06111f] shadow-glow xl:h-[calc(100vh-90px)] xl:min-h-[720px]">
-          <div ref={mapContainer} className="absolute inset-0 h-full min-h-[650px] w-full" />
-          <div className="pointer-events-none absolute left-4 top-4 z-10 grid gap-2 sm:grid-cols-2">
-            <div className="border border-command-300/30 bg-command-950/90 px-3 py-2 text-xs text-slate-300"><span className="text-slate-500">Total Records</span><p className="mt-1 text-base font-semibold text-white">{summary?.total_records || 0}</p></div>
-            <div className="border border-command-300/30 bg-command-950/90 px-3 py-2 text-xs text-slate-300"><span className="text-slate-500">Hotspots</span><p className="mt-1 text-base font-semibold text-white">{hotspots.length}</p></div>
-            <div className="border border-command-300/30 bg-command-950/90 px-3 py-2 text-xs text-slate-300"><span className="text-slate-500">Highest Risk</span><p className="mt-1 text-sm font-semibold text-white">{summary?.highest_intensity_district || "No data"}</p></div>
-            <div className="border border-command-300/30 bg-command-950/90 px-3 py-2 text-xs text-slate-300"><span className="text-slate-500">Coordinate Mode</span><p className="mt-1 text-sm font-semibold text-alert-high">{fallbackCount > 0 ? "District fallback" : "Exact coordinates"}</p></div>
-            <div className="border border-command-300/30 bg-command-950/90 px-3 py-2 text-xs text-slate-300 sm:col-span-2"><span className="text-slate-500">Geo Accuracy</span><p className="mt-1 text-sm font-semibold text-white">{summary?.coordinate_available_percentage || 0}% exact</p></div>
+          <div className="absolute left-4 right-4 top-4 z-20 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <button className="pointer-events-auto inline-flex min-h-10 items-center gap-2 self-start rounded-md border border-command-700 bg-command-950/95 px-3 py-2 text-xs font-semibold text-slate-200 shadow-glow hover:bg-command-850" onClick={() => setFiltersOpen((current) => !current)} type="button">
+              {filtersOpen ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+              {filtersOpen ? "Hide Filters" : "Show Filters"}
+            </button>
+            <div className="pointer-events-none max-w-full rounded-md border border-command-700 bg-command-950/90 px-3 py-2 text-xs text-slate-300">
+              <span className="inline-flex items-center gap-1"><Filter className="h-3.5 w-3.5 text-command-300" /> {activeFilterSummary(appliedFilters)}</span>
+            </div>
           </div>
-          {loading && <div className="absolute left-4 top-4 rounded border border-command-700 bg-command-900/90 px-3 py-2 text-sm text-slate-300">Updating map...</div>}
+          <div ref={mapContainer} className="absolute inset-0 h-full min-h-[650px] w-full" />
+          {loading && <div className="absolute bottom-4 left-4 z-20 rounded border border-command-700 bg-command-900/90 px-3 py-2 text-sm text-slate-300">Updating map...</div>}
           {fallbackCount > 0 && (
             <div className="absolute right-4 top-4 rounded border border-alert-high/40 bg-command-900/90 px-3 py-2 text-sm text-alert-high">
               District centroid fallback

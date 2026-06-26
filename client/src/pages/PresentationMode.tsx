@@ -19,12 +19,10 @@ const flowSteps = [
 const journey = [
   { title: "Upload crime data", description: "Import the Karnataka FIR CSV and map real source columns into CrimeRecords.", to: "/upload", icon: UploadCloud },
   { title: "View dashboard", description: "See KPIs, trends, distributions, rankings, and recent records.", to: "/dashboard", icon: Database },
-  { title: "Analyze District Risk DNA", description: "Open explainable district risk scores and recommended police actions.", to: "/district-risk-dna", icon: Shield },
-  { title: "Detect Red-Zone Alerts", description: "Review anomaly spikes and high-risk operational alerts.", to: "/alerts", icon: Flame },
-  { title: "Explore Hotspot Map", description: "Inspect coordinate-backed heat zones and district intensity.", to: "/hotspot-map", icon: Map },
-  { title: "Use Crime Time Machine", description: "Compare crime periods and movement patterns over time.", to: "/crime-time-machine", icon: Clock3 },
-  { title: "Check Crime Weather Forecast", description: "Review rule-based future risk forecasts from historical signals.", to: "/crime-forecast", icon: CloudSun },
-  { title: "Generate AI Intelligence Report", description: "Create a Catalyst-backed PDF report with Gemini/rule-based fallback.", to: "/ai-report", icon: FileText }
+  { title: "Open Risk Intelligence Center", description: "Compare explainable district and station risk before prioritizing action.", to: "/risk-intelligence-center", icon: Shield },
+  { title: "Check Alerts & Pattern Detection", description: "Review anomaly spikes, high-risk signals, and hidden crime patterns.", to: "/alerts-patterns", icon: Flame },
+  { title: "Explore Crime Trend & Hotspot Explorer", description: "Inspect map concentration, period movement, and forecast signals.", to: "/crime-trend-hotspot", icon: Map },
+  { title: "Generate AI Intelligence Report", description: "Create a Catalyst-backed report with Gemini/rule-based fallback.", to: "/reports-briefing", icon: FileText }
 ];
 
 const features = [
@@ -57,6 +55,13 @@ const stack = [
   "Zoho Catalyst Data Store",
   "Zoho Catalyst Authentication",
   "Gemini API"
+];
+
+const demoRoles = [
+  "Super Admin: admin@crimepulse.ai / Admin@123",
+  "District Command Officer: district@crimepulse.ai / District@123",
+  "Police Station Officer: station@crimepulse.ai / Station@123",
+  "Crime Analyst: analyst@crimepulse.ai / Analyst@123"
 ];
 
 const PresentationMode = () => {
@@ -206,6 +211,14 @@ const PresentationMode = () => {
           </div>
         </section>
       </div>
+
+      <section className="rounded-md border border-command-700 bg-command-900/85 p-5 shadow-glow">
+        <h2 className="text-xl font-semibold text-white">Judge Demo Access</h2>
+        <p className="mt-2 text-sm text-slate-400">Use Super Admin to upload or reset the shared demonstration dataset. Other roles show the same stored data through their assigned access scope.</p>
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          {demoRoles.map((role) => <p key={role} className="rounded border border-command-700 bg-command-850 px-3 py-3 font-mono text-xs text-command-300">{role}</p>)}
+        </div>
+      </section>
     </div>
   );
 };

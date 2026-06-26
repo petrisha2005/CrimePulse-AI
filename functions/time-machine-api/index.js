@@ -93,27 +93,7 @@ function normalizeCrimeRow(row) {
 }
 
 async function fetchAllCrimeRecords(app) {
-  const allRows = [];
-  let offset = 0;
-  try {
-    while (true) {
-      const result = await app.zcql().executeZCQLQuery(`SELECT * FROM ${CRIME_TABLE} LIMIT ${PAGE_SIZE} OFFSET ${offset}`);
-      const rows = unwrapRows(result);
-      allRows.push(...rows);
-      if (rows.length < PAGE_SIZE) break;
-      offset += PAGE_SIZE;
-    }
-    return allRows.map(normalizeCrimeRow);
-  } catch (error) {
-    console.warn("[time-machine-api] paginated ZCQL failed; using Data Store fallback", error.message);
-    try {
-      const rows = unwrapRows(await app.datastore().table(CRIME_TABLE).getAllRows());
-      return rows.map(normalizeCrimeRow);
-    } catch (fallbackError) {
-      console.warn("[time-machine-api] Data Store fallback failed; using shared loader", fallbackError.message);
-      return fetchCrimeRecords(app, { limit: 5000 });
-    }
-  }
+  return fetchCrimeRecords(app);
 }
 
 function pctChange(previous, current) {

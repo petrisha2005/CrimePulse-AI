@@ -12,6 +12,9 @@ import type {
   TimeMachineYearlyItem
 } from "../types/crime";
 import { readJsonOrLocalFallback } from "./localFallback";
+import { crimeService } from "./crimeService";
+import { toTimeMachineFilterOptions } from "../utils/dynamicFilterOptions";
+import { buildCacheKey, cachedApiFetch, CACHE_TTL } from "../utils/apiCache";
 
 const timeMachineApiBase = import.meta.env.VITE_TIME_MACHINE_API_BASE || "/server/time-machine-api";
 
@@ -47,17 +50,22 @@ export function extractApiData<T>(response: ApiEnvelope<T> | T | null | undefine
 }
 
 const request = async <T>(path: string, filters?: TimeMachineFilters): Promise<T> => {
-  const response = await fetch(`${timeMachineApiBase}${path}${queryString(filters)}`);
-  const parsed = await readJsonOrLocalFallback<ApiEnvelope<T> | T>(response, path);
+  const endpoint = `${timeMachineApiBase}${path}${queryString(filters)}`;
+  return cachedApiFetch<T>(buildCacheKey(`time-machine:${path}`, filters), endpoint, {
+    ttlMs: path.includes("filters") ? CACHE_TTL.filters : CACHE_TTL.analytics,
+    parseResponse: async (response) => {
+      const parsed = await readJsonOrLocalFallback<ApiEnvelope<T> | T>(response, path);
 
-  if (!response.ok || (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) && "success" in parsed && parsed.success === false)) {
-    const failure = parsed as ApiEnvelope<T>;
-    throw new Error([failure.message, failure.error, failure.details].filter(Boolean).join(" | ") || `Time Machine request failed with status ${response.status}`);
-  }
+      if (!response.ok || (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) && "success" in parsed && parsed.success === false)) {
+        const failure = parsed as ApiEnvelope<T>;
+        throw new Error([failure.message, failure.error, failure.details].filter(Boolean).join(" | ") || `Time Machine request failed with status ${response.status}`);
+      }
 
-  const data = extractApiData<T>(parsed);
-  if (data === null) throw new Error(`Time Machine endpoint returned no data: ${path}`);
-  return data;
+      const data = extractApiData<T>(parsed);
+      if (data === null) throw new Error(`Time Machine endpoint returned no data: ${path}`);
+      return data;
+    }
+  });
 };
 
 export const timeMachineService = {
@@ -69,5 +77,5 @@ export const timeMachineService = {
   getMovement: (filters?: TimeMachineFilters) => request<{ movement_patterns: MovementPattern[]; rising_districts: TimeMachineChangeItem[]; falling_districts: TimeMachineChangeItem[]; rising_crime_types: TimeMachineChangeItem[]; falling_crime_types: TimeMachineChangeItem[]; rising_police_stations: TimeMachineChangeItem[]; falling_police_stations: TimeMachineChangeItem[] }>("/time-machine/movement", filters),
   getInsights: (filters?: TimeMachineFilters) => request<TimeMachineInsight[]>("/time-machine/insights", filters),
   getPeriod: (period: string, filters?: TimeMachineFilters) => request<TimeMachinePeriodDetails>("/time-machine/period", { ...filters, period }),
-  getFilters: () => request<TimeMachineFilterOptions>("/time-machine/filters")
+  getFilters: async () => toTimeMachineFilterOptions((await crimeService.getCrimeRecordFilters()).data)
 };

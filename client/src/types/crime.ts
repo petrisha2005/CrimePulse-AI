@@ -77,6 +77,23 @@ export interface DashboardFilters {
   severity?: string;
   status?: string;
   fir_stage?: string;
+  crime_group?: string;
+  crime_subtype?: string;
+  fir_type?: string;
+  complaint_mode?: string;
+}
+
+export interface DashboardResponseMeta {
+  totalUploadedRecords: number;
+  recordsAnalyzed: number;
+  analysisScope: "full_dataset" | "filtered_dataset" | string;
+  isFiltered: boolean;
+  isSampled: boolean;
+  isCached?: boolean;
+  cacheGeneratedAt?: string;
+  cacheVersion?: string;
+  durationMs?: number;
+  appliedFilters: Record<string, string>;
 }
 
 export interface DashboardFilterOptions {
@@ -91,6 +108,13 @@ export interface DashboardFilterOptions {
 
 export interface GlobalStats {
   total_records: number;
+  total_uploaded_records?: number;
+  records_analyzed?: number;
+  analysis_scope?: string;
+  is_sampled?: boolean;
+  is_cached?: boolean;
+  cache_generated_at?: string;
+  duration_ms?: number;
   total_districts: number;
   total_police_stations: number;
   year_range: string;
@@ -396,6 +420,36 @@ export interface AlertCharts {
   severityDistribution: ChartDatum[];
   monthlyAnomalyTrend: ChartDatum[];
   alertsByCrimeType?: ChartDatum[];
+}
+
+export interface TimeRiskAlert {
+  alert_id: string;
+  crimeType: string;
+  crime_type?: string;
+  district: string;
+  policeStation: string;
+  police_station?: string;
+  riskWindow: string | null;
+  risk_window?: string | null;
+  riskPeriod: string | null;
+  risk_period?: string | null;
+  hasExactTime: boolean;
+  has_exact_time?: boolean;
+  timeSourceField?: string;
+  time_source_field?: string;
+  evidenceCount: number;
+  evidence_count?: number;
+  confidence: "Low" | "Medium" | "High";
+  message: string;
+  suggestedAction: string;
+  suggested_action?: string;
+}
+
+export interface TimeRiskResponse {
+  has_exact_time_data: boolean;
+  exact_time_field: string;
+  message: string;
+  alerts: TimeRiskAlert[];
 }
 
 export interface MapFilters {
@@ -1013,7 +1067,7 @@ export interface ReportFilters {
 }
 
 export interface ReportRequest {
-  report_type: "executive-summary" | "district-report" | "risk-report" | "hotspot-report" | "forecast-report" | "full-intelligence-report" | string;
+  report_type: "executive-summary" | "full-intelligence-report" | "district-report" | "red-zone-alerts-report" | "hotspot-map-report" | "crime-trend-forecast-report" | "fir-stage-case-progress-report" | string;
   report_title?: string;
   filters: ReportFilters;
   sections: string[];
@@ -1053,6 +1107,19 @@ export interface GeneratedReportResponse {
   recommendations: string[];
   preview?: ReportPreview;
   download_url?: string;
+  ai_mode?: string;
+  meta?: {
+    totalUploadedRecords?: number;
+    recordsAnalyzed?: number;
+    reportType?: string;
+    reportTypeLabel?: string;
+    appliedFilters?: ReportFilters | Record<string, string>;
+    generatedAt?: string;
+    coordinateCoverage?: number;
+    dataQuality?: number;
+    isGeminiUsed?: boolean;
+    isFallbackUsed?: boolean;
+  };
 }
 
 export interface RecentReport {
@@ -1200,6 +1267,7 @@ export interface AiInsightFilterOptions {
 export interface ApiResponse<T> {
   data: T;
   success?: boolean;
+  meta?: DashboardResponseMeta;
   pagination?: CrimeRecordsPagination;
   totalRecords?: number;
   source?: "catalyst" | "sample";
@@ -1239,6 +1307,10 @@ export interface CrimeRecordFilterOptions {
   crime_type: string[];
   severity: string[];
   fir_stage: string[];
+  crime_subtype?: string[];
+  complaint_mode?: string[];
+  beat_name?: string[];
+  village_area_name?: string[];
   years: string[];
   months: string[];
   districts: string[];
@@ -1246,6 +1318,11 @@ export interface CrimeRecordFilterOptions {
   crimeTypes: string[];
   severities: string[];
   statuses: string[];
+  crimeSubtypes?: string[];
+  firStages?: string[];
+  complaintModes?: string[];
+  beats?: string[];
+  villages?: string[];
 }
 
 export interface UploadSummary {
@@ -1287,8 +1364,10 @@ export interface CsvPreview {
     validRows: number;
     warningRows: number;
     detectedDistricts: string[];
+    detectedPoliceStations: string[];
     detectedCrimeTypes: string[];
     detectedDateRange: string;
+    coordinateAvailablePercentage: number;
   };
 }
 

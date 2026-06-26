@@ -10,6 +10,8 @@ const {
   hasCoordinates,
   isHeinous,
   isNonHeinous,
+  readAnalyticsCache,
+  rebuildAnalyticsCache,
   topN,
   toNumber
 } = require("./crimeAnalytics");
@@ -32,6 +34,8 @@ const AVAILABLE_ROUTES = [
   "GET /dashboard/complaint-mode-summary",
   "GET /dashboard/recent-records",
   "GET /dashboard/filters",
+  "POST /analytics/rebuild",
+  "POST /dashboard/analytics/rebuild",
   "GET /dashboard/district-analytics/summary",
   "GET /dashboard/district-analytics/ranking",
   "GET /dashboard/district-analytics/:district",
@@ -67,6 +71,52 @@ function query(req) {
   return Object.fromEntries(new URL(req.url || "/", `https://${req.headers.host || "catalyst.local"}`).searchParams.entries());
 }
 
+function clean(value) {
+  return String(value ?? "").trim();
+}
+
+function isActiveFilter(value) {
+  const normalized = clean(value).toLowerCase();
+  return normalized !== "" && normalized !== "all";
+}
+
+function dashboardAppliedFilters(params = {}) {
+  const candidates = {
+    fir_year: params.fir_year || params.year || params.firYear,
+    fir_month: params.fir_month || params.month || params.firMonth,
+    district: params.district,
+    police_station: params.police_station || params.policeStation,
+    crime_type: params.crime_type || params.crime_group || params.crimeType,
+    crime_subtype: params.crime_subtype,
+    severity: params.severity || params.fir_type || params.firType,
+    fir_stage: params.fir_stage || params.status || params.firStage,
+    complaint_mode: params.complaint_mode || params.complaintMode,
+    dataset_id: params.dataset_id
+  };
+  return Object.fromEntries(Object.entries(candidates).filter(([, value]) => isActiveFilter(value)).map(([key, value]) => [key, clean(value)]));
+}
+
+function dashboardMeta(allRecords, records, params = {}, cache = {}) {
+  const appliedFilters = dashboardAppliedFilters(params);
+  const isFiltered = Object.keys(appliedFilters).length > 0;
+  return {
+    totalUploadedRecords: allRecords.length,
+    recordsAnalyzed: records.length,
+    analysisScope: isFiltered ? "filtered_dataset" : "full_dataset",
+    isFiltered,
+    isSampled: false,
+    isCached: Boolean(cache.isCached),
+    cacheGeneratedAt: cache.cacheGeneratedAt || "",
+    cacheVersion: cache.cacheVersion || "",
+    durationMs: cache.durationMs || 0,
+    appliedFilters
+  };
+}
+
+function sendData(res, data, allRecords, records, params, cache) {
+  return send(res, 200, { success: true, data, meta: dashboardMeta(allRecords, records, params, cache) });
+}
+
 function chart(items, field = "name") {
   return items.map((item) => ({ ...item, [field]: item.name }));
 }
@@ -95,6 +145,47 @@ function recentRecords(records) {
 
 function pct(part, total) {
   return total > 0 ? Math.round((part / total) * 100) : 0;
+}
+
+const cachedRouteMap = {
+  "/dashboard/global-stats": "globalStats",
+  "/dashboard/summary": "dashboardSummary",
+  "/dashboard/monthly-trends": "monthlyTrends",
+  "/dashboard/yearly-trends": "yearlyTrends",
+  "/dashboard/crime-types": "crimeTypes",
+  "/dashboard/district-ranking": "districtRanking",
+  "/dashboard/police-station-ranking": "policeStationRanking",
+  "/dashboard/crime-group-ranking": "crimeGroupRanking",
+  "/dashboard/crime-head-ranking": "crimeHeadRanking",
+  "/dashboard/fir-stage-summary": "firStageSummary",
+  "/dashboard/complaint-mode-summary": "complaintModeSummary",
+  "/dashboard/recent-records": "recentRecords",
+  "/dashboard/filters": "filterOptions"
+};
+
+function hasDashboardFilters(params) {
+  return Object.keys(dashboardAppliedFilters(params)).length > 0;
+}
+
+function sendCachedRoute(res, path, params, cache, startedAt) {
+  const key = cachedRouteMap[path];
+  if (!key || !cache?.summary) return false;
+  const data = cache.summary[key];
+  if (data === undefined) return false;
+  const total = Number(cache.summary.totalRecords || cache.summary.recordsAnalyzed || cache.recordsAnalyzed || 0);
+  const meta = {
+    totalUploadedRecords: total,
+    recordsAnalyzed: total,
+    analysisScope: "full_dataset",
+    isFiltered: false,
+    isSampled: false,
+    isCached: true,
+    cacheGeneratedAt: cache.generatedAt || cache.summary.generatedAt || "",
+    cacheVersion: cache.cacheVersion || cache.summary.cacheVersion || "v1",
+    durationMs: Date.now() - startedAt,
+    appliedFilters: {}
+  };
+  return send(res, 200, { success: true, data, meta });
 }
 
 function riskLevel(score) {
@@ -269,10 +360,44 @@ module.exports = async (req, res) => {
   if (req.method === "GET" && path === "/health") return send(res, 200, { success: true, service: SERVICE_NAME, status: "running" });
 
   try {
+    const startedAt = Date.now();
     const app = catalyst.initialize(req);
     const params = query(req);
+    const filteredRequest = hasDashboardFilters(params);
+
+    if (req.method === "POST" && (path === "/analytics/rebuild" || path === "/dashboard/analytics/rebuild")) {
+      const allRecords = await fetchCrimeRecords(app);
+      const { summary, cache } = await rebuildAnalyticsCache(app, allRecords);
+      return send(res, 200, {
+        success: true,
+        message: "Analytics cache rebuilt",
+        recordsAnalyzed: summary.recordsAnalyzed,
+        generatedAt: summary.generatedAt,
+        cacheVersion: summary.cacheVersion,
+        cacheStorage: cache?.storage || "memory",
+        durationMs: Date.now() - startedAt,
+        meta: {
+          totalUploadedRecords: summary.totalRecords,
+          recordsAnalyzed: summary.recordsAnalyzed,
+          analysisScope: "full_dataset",
+          isFiltered: false,
+          isCached: true,
+          cacheGeneratedAt: summary.generatedAt,
+          cacheVersion: summary.cacheVersion,
+          durationMs: Date.now() - startedAt,
+          appliedFilters: {}
+        }
+      });
+    }
+
+    if (req.method === "GET" && !filteredRequest && cachedRouteMap[path]) {
+      const cache = await readAnalyticsCache(app);
+      if (cache && sendCachedRoute(res, path, params, cache, startedAt)) return;
+    }
+
     const allRecords = await fetchCrimeRecords(app);
     const records = applyFilters(allRecords, params);
+    const cacheInfo = { isCached: false, durationMs: Date.now() - startedAt };
 
     if (req.method === "GET" && path === "/dashboard/debug") {
       const sampleRow = allRecords[0] || null;
@@ -286,18 +411,18 @@ module.exports = async (req, res) => {
         message: allRecords.length > 0 ? "CrimeRecords fetched and normalized successfully." : "CrimeRecords fetched successfully, but no rows were returned."
       });
     }
-    if (req.method === "GET" && path === "/dashboard/global-stats") return send(res, 200, { success: true, data: getGlobalStats(allRecords) });
-    if (req.method === "GET" && path === "/dashboard/summary") return send(res, 200, { success: true, data: getDashboardSummary(records) });
-    if (req.method === "GET" && path === "/dashboard/monthly-trends") return send(res, 200, { success: true, data: getMonthlyTrend(records) });
-    if (req.method === "GET" && path === "/dashboard/yearly-trends") return send(res, 200, { success: true, data: getYearlyTrend(records) });
-    if (req.method === "GET" && path === "/dashboard/crime-types") return send(res, 200, { success: true, data: chart(topN(records, "crime_type", 25), "crime_type") });
-    if (req.method === "GET" && path === "/dashboard/district-ranking") return send(res, 200, { success: true, data: chart(topN(records, "district", 10), "district") });
-    if (req.method === "GET" && path === "/dashboard/police-station-ranking") return send(res, 200, { success: true, data: chart(topN(records, "police_station", 10), "police_station") });
-    if (req.method === "GET" && path === "/dashboard/crime-group-ranking") return send(res, 200, { success: true, data: chart(topN(records, "crime_type", 10), "crime_type") });
-    if (req.method === "GET" && path === "/dashboard/crime-head-ranking") return send(res, 200, { success: true, data: chart(topN(records, "crime_subtype", 10), "crime_subtype") });
-    if (req.method === "GET" && path === "/dashboard/fir-stage-summary") return send(res, 200, { success: true, data: chart(topN(records, "fir_stage", 25), "fir_stage") });
-    if (req.method === "GET" && path === "/dashboard/complaint-mode-summary") return send(res, 200, { success: true, data: chart(topN(records, "complaint_mode", 25), "complaint_mode") });
-    if (req.method === "GET" && path === "/dashboard/recent-records") return send(res, 200, { success: true, data: recentRecords(records) });
+    if (req.method === "GET" && path === "/dashboard/global-stats") return sendData(res, getGlobalStats(allRecords), allRecords, allRecords, {}, cacheInfo);
+    if (req.method === "GET" && path === "/dashboard/summary") return sendData(res, getDashboardSummary(records), allRecords, records, params, cacheInfo);
+    if (req.method === "GET" && path === "/dashboard/monthly-trends") return sendData(res, getMonthlyTrend(records), allRecords, records, params, cacheInfo);
+    if (req.method === "GET" && path === "/dashboard/yearly-trends") return sendData(res, getYearlyTrend(records), allRecords, records, params, cacheInfo);
+    if (req.method === "GET" && path === "/dashboard/crime-types") return sendData(res, chart(topN(records, "crime_type", 25), "crime_type"), allRecords, records, params, cacheInfo);
+    if (req.method === "GET" && path === "/dashboard/district-ranking") return sendData(res, chart(topN(records, "district", 10), "district"), allRecords, records, params, cacheInfo);
+    if (req.method === "GET" && path === "/dashboard/police-station-ranking") return sendData(res, chart(topN(records, "police_station", 10), "police_station"), allRecords, records, params, cacheInfo);
+    if (req.method === "GET" && path === "/dashboard/crime-group-ranking") return sendData(res, chart(topN(records, "crime_type", 10), "crime_type"), allRecords, records, params, cacheInfo);
+    if (req.method === "GET" && path === "/dashboard/crime-head-ranking") return sendData(res, chart(topN(records, "crime_subtype", 10), "crime_subtype"), allRecords, records, params, cacheInfo);
+    if (req.method === "GET" && path === "/dashboard/fir-stage-summary") return sendData(res, chart(topN(records, "fir_stage", 25), "fir_stage"), allRecords, records, params, cacheInfo);
+    if (req.method === "GET" && path === "/dashboard/complaint-mode-summary") return sendData(res, chart(topN(records, "complaint_mode", 25), "complaint_mode"), allRecords, records, params, cacheInfo);
+    if (req.method === "GET" && path === "/dashboard/recent-records") return sendData(res, recentRecords(records), allRecords, records, params, cacheInfo);
     if (req.method === "GET" && path === "/dashboard/filters") return send(res, 200, { success: true, data: filterOptions(allRecords) });
     if (req.method === "GET" && path === "/dashboard/district-analytics/summary") return send(res, 200, { success: true, data: districtAnalyticsSummary(records) });
     if (req.method === "GET" && path === "/dashboard/district-analytics/ranking") return send(res, 200, { success: true, data: districtRanking(records) });

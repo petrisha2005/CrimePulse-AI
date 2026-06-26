@@ -1,23 +1,28 @@
 import type { ApiResponse, ChartDatum, CrimeRecord, DashboardSummary, MonthlyTrend, UploadSummary } from "../types/crime";
+import { buildCacheKey, cachedApiFetch, CACHE_TTL, invalidateCrimePulseCache } from "../utils/apiCache";
 
 const crimeApiBase = import.meta.env.VITE_CRIME_API_BASE || "/server/crime-api";
 const dashboardApiBase = import.meta.env.VITE_DASHBOARD_API_BASE || "/server/dashboard-api";
 
 const request = async <T>(url: string, options?: RequestInit): Promise<T> => {
-  const response = await fetch(url, {
+  const method = String(options?.method || "GET").toUpperCase();
+  return cachedApiFetch<T>(buildCacheKey(`legacy:${url}`, method === "GET" ? {} : { body: options?.body ? String(options.body) : "" }), url, {
     headers: {
       "Content-Type": "application/json",
       ...(options?.headers || {})
     },
-    ...options
+    ...options,
+    ttlMs: url.includes("/crimes") ? CACHE_TTL.records : CACHE_TTL.analytics,
+    forceRefresh: method !== "GET",
+    parseResponse: async (response) => {
+      if (!response.ok) {
+        const errorBody = await response.json().catch(() => ({}));
+        throw new Error(errorBody.message || `Request failed with status ${response.status}`);
+      }
+
+      return response.json() as Promise<T>;
+    }
   });
-
-  if (!response.ok) {
-    const errorBody = await response.json().catch(() => ({}));
-    throw new Error(errorBody.message || `Request failed with status ${response.status}`);
-  }
-
-  return response.json();
 };
 
 export const crimeApi = {
@@ -41,7 +46,9 @@ export const crimeApi = {
       throw new Error(body.message || "CSV upload failed");
     }
 
-    return response.json() as Promise<ApiResponse<UploadSummary>>;
+    const result = await response.json() as ApiResponse<UploadSummary>;
+    invalidateCrimePulseCache();
+    return result;
   }
 };
 

@@ -682,6 +682,39 @@ body {
   word-break: break-word;
 }
 
+.report-pdf-export-host {
+  position: fixed;
+  left: -100000px;
+  top: 0;
+  width: 210mm;
+  min-height: 297mm;
+  background: #ffffff;
+  color: #111827;
+  z-index: -1;
+}
+
+.report-print-content {
+  background: #ffffff !important;
+  color: #111827 !important;
+  max-height: none !important;
+  overflow: visible !important;
+}
+
+.report-print-content .report-section,
+.report-print-content .kpi-card,
+.report-print-content .meta-card,
+.report-print-content .recommendation-card,
+.report-print-content table,
+.report-print-content tr {
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+.report-print-content table {
+  width: 100%;
+  table-layout: auto;
+}
+
 ::selection {
   background: rgba(131, 197, 255, 0.35);
   color: #ffffff;

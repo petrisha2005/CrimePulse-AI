@@ -171,16 +171,7 @@ const AiInsights = () => {
     }
   };
 
-  if (loading) {
-    return (
-      <div className="space-y-6">
-        <div className="h-28 animate-pulse rounded-md bg-command-900" />
-        <div className="grid gap-4 md:grid-cols-3">
-          {[1, 2, 3, 4, 5, 6].map((item) => <div key={item} className="h-28 animate-pulse rounded-md bg-command-900" />)}
-        </div>
-      </div>
-    );
-  }
+  if (loading) return <StateBlock title="Loading AI Insights" message="Retrieving cached AI intelligence if available." />;
 
   return (
     <div className="space-y-6">

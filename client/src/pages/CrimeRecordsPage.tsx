@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { Download, Eye, Loader2, RefreshCw, Search, X } from "lucide-react";
+import { Download, Eye, Loader2, RefreshCw, Search } from "lucide-react";
 import DashboardCard from "../components/DashboardCard";
 import StateBlock from "../components/StateBlock";
 import NoDataState from "../components/NoDataState";
+import CrimeRecordDetailsDrawer from "../components/CrimeRecordDetailsDrawer";
 import { useAuth } from "../auth/AuthContext";
+import { useCrimeFilters } from "../hooks/useCrimeFilters";
 import { getScopeLabel } from "../auth/accessScope";
 import { crimeService } from "../services/crimeService";
 import type { CrimeRecord, CrimeRecordFilterOptions, CrimeRecordQuery, CrimeRecordsPagination } from "../types/crime";
@@ -80,25 +82,34 @@ const FilterSelect = ({ label, value, options, onChange, locked = false }: { lab
       className="mt-2 min-h-11 w-full rounded-md border border-command-700 bg-command-850 px-3 text-sm normal-case tracking-normal text-white outline-none focus:border-command-300"
       value={value}
       onChange={(event) => onChange(event.target.value)}
-      disabled={locked}
+      disabled={locked || options.length === 0}
     >
-      <option value="All">All</option>
+      <option value="All">{options.length === 0 ? "No options available" : "All"}</option>
       {options.map((option) => (
         <option key={option} value={option}>{option}</option>
       ))}
     </select>
     {locked && <span className="mt-1 block normal-case tracking-normal text-[11px] text-command-300">Restricted by your role</span>}
+    {!locked && options.length === 0 && <span className="mt-1 block normal-case tracking-normal text-[11px] text-slate-500">No values exist in the current dataset.</span>}
   </label>
 );
 
-const dataQualityNotes = (record: CrimeRecord) => {
-  const missingRequired = ["district", "police_station", "crime_type", "fir_year", "fir_month", "fir_day"].filter((field) => !String(record[field as keyof CrimeRecord] ?? "").trim());
-  const coordinatesAvailable = record.latitude_value !== null && record.latitude_value !== undefined && record.longitude_value !== null && record.longitude_value !== undefined;
-  return {
-    coordinatesAvailable,
-    missingRequired
-  };
+const severityClass = {
+  Low: "border-alert-low/40 bg-alert-low/15 text-alert-low",
+  Medium: "border-alert-medium/40 bg-alert-medium/15 text-alert-medium",
+  High: "border-alert-high/40 bg-alert-high/15 text-alert-high",
+  Critical: "border-alert-critical/40 bg-alert-critical/15 text-alert-critical"
 };
+
+const CompactCell = ({ value, className = "" }: { value?: string | number | null; className?: string }) => (
+  <span className={`block max-w-full truncate whitespace-nowrap ${className}`} title={String(value ?? "-")}>{String(value ?? "-") || "-"}</span>
+);
+
+const hasActiveFilters = (filters: typeof allFilters, search = "") =>
+  Boolean(search.trim()) || Object.values(filters).some((value) => {
+    const normalized = String(value ?? "").trim().toLowerCase();
+    return normalized !== "" && normalized !== "all";
+  });
 
 const CrimeRecordsPage = () => {
   const { currentUser, scopeParams } = useAuth();
@@ -117,6 +128,7 @@ const CrimeRecordsPage = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [selected, setSelected] = useState<CrimeRecord | null>(null);
+  const dynamicFilterSource = useCrimeFilters({ selectedDistrict: filters.district, selectedCrimeType: filters.crime_type, userRole: currentUser?.role, assignedDistrict: currentUser?.assignedDistrict, assignedPoliceStation: currentUser?.assignedPoliceStation });
 
   const query = useMemo<CrimeRecordQuery>(() => ({
     page,
@@ -125,14 +137,7 @@ const CrimeRecordsPage = () => {
     ...appliedFilters
   }), [page, limit, appliedSearch, appliedFilters]);
 
-  const loadOptions = async () => {
-    try {
-      const response = await crimeService.getCrimeRecordFilters();
-      setOptions(response.data);
-    } catch {
-      setOptions(emptyOptions);
-    }
-  };
+  useEffect(() => { setOptions({ ...emptyOptions, ...dynamicFilterSource.options }); }, [dynamicFilterSource.options]);
 
   const loadRecords = async (nextQuery = query) => {
     try {
@@ -147,10 +152,6 @@ const CrimeRecordsPage = () => {
       setLoading(false);
     }
   };
-
-  useEffect(() => {
-    loadOptions();
-  }, []);
 
   useEffect(() => {
     setFilters(scopedFilters);
@@ -176,6 +177,11 @@ const CrimeRecordsPage = () => {
     setPage(1);
   };
 
+  const updateFilter = (key: keyof typeof allFilters, value: string) => {
+    if ((key === "district" && districtLocked) || (key === "police_station" && stationLocked)) return;
+    setFilters((current) => ({ ...current, [key]: value, ...(key === "district" && !stationLocked ? { police_station: "All" } : {}), ...scopeParams }));
+  };
+
   const exportCsv = () => {
     const headers = fieldLabels.map(([, label]) => label);
     const rows = records.map((record) => fieldLabels.map(([field]) => `"${String(record[field] ?? "").replace(/"/g, '""')}"`));
@@ -187,8 +193,6 @@ const CrimeRecordsPage = () => {
     link.click();
     URL.revokeObjectURL(url);
   };
-
-  const selectedQuality = selected ? dataQualityNotes(selected) : null;
 
   if (loading && records.length === 0) {
     return (
@@ -237,13 +241,13 @@ const CrimeRecordsPage = () => {
             />
           </label>
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <FilterSelect label="FIR Year" value={filters.fir_year} options={options.fir_year || options.years} onChange={(value) => setFilters((current) => ({ ...current, fir_year: value }))} />
-            <FilterSelect label="FIR Month" value={filters.fir_month} options={options.fir_month || options.months} onChange={(value) => setFilters((current) => ({ ...current, fir_month: value }))} />
-            <FilterSelect label="District" value={filters.district} options={options.district || options.districts} onChange={(value) => setFilters((current) => ({ ...current, district: value }))} locked={districtLocked} />
-            <FilterSelect label="Police Station" value={filters.police_station} options={options.police_station || options.policeStations} onChange={(value) => setFilters((current) => ({ ...current, police_station: value }))} locked={stationLocked} />
-            <FilterSelect label="Crime Type" value={filters.crime_type} options={options.crime_type || options.crimeTypes} onChange={(value) => setFilters((current) => ({ ...current, crime_type: value }))} />
-            <FilterSelect label="Severity" value={filters.severity} options={options.severity || options.severities} onChange={(value) => setFilters((current) => ({ ...current, severity: value }))} />
-            <FilterSelect label="FIR Stage" value={filters.fir_stage} options={options.fir_stage || options.statuses} onChange={(value) => setFilters((current) => ({ ...current, fir_stage: value }))} />
+            <FilterSelect label="FIR Year" value={filters.fir_year} options={options.fir_year || options.years} onChange={(value) => updateFilter("fir_year", value)} />
+            <FilterSelect label="FIR Month" value={filters.fir_month} options={options.fir_month || options.months} onChange={(value) => updateFilter("fir_month", value)} />
+            <FilterSelect label="District" value={filters.district} options={options.district || options.districts} onChange={(value) => updateFilter("district", value)} locked={districtLocked} />
+            <FilterSelect label="Police Station" value={filters.police_station} options={options.police_station || options.policeStations} onChange={(value) => updateFilter("police_station", value)} locked={stationLocked} />
+            <FilterSelect label="Crime Type" value={filters.crime_type} options={options.crime_type || options.crimeTypes} onChange={(value) => updateFilter("crime_type", value)} />
+            <FilterSelect label="Severity" value={filters.severity} options={options.severity || options.severities} onChange={(value) => updateFilter("severity", value)} />
+            <FilterSelect label="FIR Stage" value={filters.fir_stage} options={options.fir_stage || options.statuses} onChange={(value) => updateFilter("fir_stage", value)} />
           </div>
           <div className="flex flex-wrap gap-3">
             <button className="rounded-md bg-command-500 px-4 py-3 text-sm font-semibold text-white hover:bg-command-300 hover:text-command-950" onClick={applyFilters} type="button">Apply Filters</button>
@@ -264,43 +268,74 @@ const CrimeRecordsPage = () => {
       )}
 
       {!error && records.length === 0 ? (
-        <NoDataState currentUser={currentUser} moduleName="Crime Records" />
+        hasActiveFilters(appliedFilters, appliedSearch) ? (
+          <section className="rounded-md border border-command-700 bg-command-900/85 p-6 text-center shadow-glow">
+            <h2 className="text-2xl font-semibold text-white">No records match selected filters.</h2>
+            <p className="mx-auto mt-3 max-w-2xl text-sm leading-6 text-slate-400">Try clearing filters or widening the search to inspect more stored records.</p>
+            <button className="mt-5 rounded-md bg-command-500 px-4 py-3 text-sm font-semibold text-white hover:bg-command-300 hover:text-command-950" onClick={clearFilters} type="button">
+              Clear Filters
+            </button>
+          </section>
+        ) : (
+          <NoDataState currentUser={currentUser} moduleName="Crime Records" />
+        )
       ) : (
         <section className="overflow-hidden rounded-md border border-command-700 bg-command-900/85 shadow-glow">
           <div className="table-scroll">
-            <table className="data-table min-w-full text-left text-sm">
+            <table className="data-table hidden min-w-full table-fixed text-left text-sm md:table">
               <thead className="sticky top-0 bg-command-850 text-xs uppercase text-slate-400">
                 <tr>
-                  {["Crime ID", "District", "Police Station", "Crime Type", "Crime Head", "Severity", "FIR Year", "FIR Month", "FIR Day", "Crime Date", "FIR Stage", "Complaint Mode", "Actions"].map((header) => (
-                    <th key={header} className="whitespace-nowrap px-3 py-3">{header}</th>
-                  ))}
+                  <th className="w-40 whitespace-nowrap px-3 py-3">Crime ID</th>
+                  <th className="w-36 whitespace-nowrap px-3 py-3">District</th>
+                  <th className="w-52 whitespace-nowrap px-3 py-3">Police Station</th>
+                  <th className="w-56 whitespace-nowrap px-3 py-3">Crime Type</th>
+                  <th className="w-28 whitespace-nowrap px-3 py-3">Severity</th>
+                  <th className="w-24 whitespace-nowrap px-3 py-3">FIR Year</th>
+                  <th className="w-24 whitespace-nowrap px-3 py-3">FIR Month</th>
+                  <th className="w-32 whitespace-nowrap px-3 py-3 text-right">View Details</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-command-700/70">
                 {records.map((record) => (
                   <tr key={record.ROWID || record.crime_id} className="hover:bg-command-850/70">
-                    <td className="whitespace-nowrap px-3 py-3 font-medium text-command-300">{record.crime_id}</td>
-                    <td className="whitespace-nowrap px-3 py-3 text-slate-200">{record.district}</td>
-                    <td className="whitespace-nowrap px-3 py-3 text-slate-300">{record.police_station}</td>
-                    <td className="min-w-48 px-3 py-3 text-slate-300">{record.crime_type}</td>
-                    <td className="min-w-48 px-3 py-3 text-slate-300">{record.crime_subtype}</td>
-                    <td className="px-3 py-3 text-slate-300">{record.severity}</td>
-                    <td className="px-3 py-3 text-slate-300">{record.fir_year}</td>
-                    <td className="px-3 py-3 text-slate-300">{record.fir_month}</td>
-                    <td className="px-3 py-3 text-slate-300">{record.fir_day}</td>
-                    <td className="whitespace-nowrap px-3 py-3 text-slate-300">{record.crime_date || "-"}</td>
-                    <td className="min-w-36 px-3 py-3 text-slate-300">{record.fir_stage || "-"}</td>
-                    <td className="min-w-36 px-3 py-3 text-slate-300">{record.complaint_mode || "-"}</td>
-                    <td className="px-3 py-3">
+                    <td className="px-3 py-3 font-medium text-command-300">
+                      <button className="block max-w-full truncate whitespace-nowrap hover:text-white" title={record.crime_id} onClick={() => setSelected(record)} type="button">{record.crime_id}</button>
+                    </td>
+                    <td className="px-3 py-3 text-slate-200"><CompactCell value={record.district} /></td>
+                    <td className="px-3 py-3 text-slate-300"><CompactCell value={record.police_station} /></td>
+                    <td className="px-3 py-3 text-slate-300"><CompactCell value={record.crime_type} /></td>
+                    <td className="whitespace-nowrap px-3 py-3">
+                      <span className={`rounded border px-2 py-1 text-xs font-semibold ${severityClass[record.severity] || severityClass.Low}`}>
+                        {record.severity || "Low"}
+                      </span>
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-3 text-slate-300">{record.fir_year || "-"}</td>
+                    <td className="whitespace-nowrap px-3 py-3 text-slate-300">{record.fir_month || "-"}</td>
+                    <td className="px-3 py-3 text-right">
                       <button className="inline-flex items-center gap-2 rounded border border-command-700 px-3 py-2 text-xs font-semibold text-command-300 hover:bg-command-800" onClick={() => setSelected(record)} type="button">
                         <Eye className="h-4 w-4" />
-                        View Details
+                        Details
                       </button>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            <div className="grid gap-3 p-3 md:hidden">
+              {records.map((record) => (
+                <button key={record.ROWID || record.crime_id} className="rounded-md border border-command-700 bg-command-850 p-4 text-left" onClick={() => setSelected(record)} type="button">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-command-300" title={record.crime_id}>{record.crime_id}</p>
+                      <p className="mt-1 truncate text-sm text-white" title={record.crime_type}>{record.crime_type}</p>
+                      <p className="mt-1 truncate text-xs text-slate-400" title={`${record.district} · ${record.police_station}`}>{record.district} · {record.police_station}</p>
+                    </div>
+                    <span className={`shrink-0 rounded border px-2 py-1 text-xs font-semibold ${severityClass[record.severity] || severityClass.Low}`}>{record.severity || "Low"}</span>
+                  </div>
+                  <p className="mt-3 text-xs text-slate-500">FIR {record.fir_year || "-"} · Month {record.fir_month || "-"}</p>
+                </button>
+              ))}
+            </div>
           </div>
           <div className="flex flex-col justify-between gap-3 border-t border-command-700 px-4 py-4 text-sm text-slate-300 md:flex-row md:items-center">
             <div>Page {pagination.page} of {pagination.totalPages} • {pagination.totalRecords.toLocaleString()} records</div>
@@ -315,51 +350,7 @@ const CrimeRecordsPage = () => {
         </section>
       )}
 
-      {selected && selectedQuality && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
-          <section className="max-h-[90vh] w-full max-w-5xl overflow-y-auto rounded-md border border-command-700 bg-command-900 p-5 shadow-glow">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="text-xs uppercase tracking-[0.18em] text-command-300">Record Details</p>
-                <h2 className="mt-1 text-2xl font-semibold text-white">{selected.crime_id}</h2>
-              </div>
-              <button className="rounded border border-command-700 p-2 text-slate-300 hover:bg-command-850" onClick={() => setSelected(null)} type="button">
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {fieldLabels.map(([field, label]) => (
-                <div key={field} className="rounded border border-command-700 bg-command-850 p-3">
-                  <p className="text-xs uppercase tracking-[0.14em] text-slate-500">{label}</p>
-                  <p className="mt-1 break-words text-sm font-medium text-white">{String(selected[field] ?? "-") || "-"}</p>
-                </div>
-              ))}
-            </div>
-            <div className="mt-5 grid gap-4 md:grid-cols-3">
-              <div className="rounded border border-command-700 bg-command-850 p-4">
-                <h3 className="font-semibold text-white">Location Information</h3>
-                <p className="mt-2 text-sm text-slate-300">{selected.offence_location || "Location not available"}</p>
-                <p className="mt-1 text-xs text-slate-500">Coordinates: {selectedQuality.coordinatesAvailable ? `${selected.latitude_value}, ${selected.longitude_value}` : "Missing"}</p>
-              </div>
-              <div className="rounded border border-command-700 bg-command-850 p-4">
-                <h3 className="font-semibold text-white">FIR Information</h3>
-                <p className="mt-2 text-sm text-slate-300">Stage: {selected.fir_stage || "Not available"}</p>
-                <p className="mt-1 text-sm text-slate-300">Complaint mode: {selected.complaint_mode || "Not available"}</p>
-                <p className="mt-1 text-sm text-slate-300">Act section: {selected.act_section || "Not available"}</p>
-              </div>
-              <div className="rounded border border-command-700 bg-command-850 p-4">
-                <h3 className="font-semibold text-white">Data Quality Notes</h3>
-                <p className={`mt-2 text-sm ${selectedQuality.coordinatesAvailable ? "text-alert-low" : "text-alert-medium"}`}>
-                  Coordinates {selectedQuality.coordinatesAvailable ? "available" : "missing"}
-                </p>
-                <p className="mt-1 text-sm text-slate-300">
-                  Required fields {selectedQuality.missingRequired.length === 0 ? "available" : `missing: ${selectedQuality.missingRequired.join(", ")}`}
-                </p>
-              </div>
-            </div>
-          </section>
-        </div>
-      )}
+      <CrimeRecordDetailsDrawer record={selected} onClose={() => setSelected(null)} />
     </div>
   );
 };

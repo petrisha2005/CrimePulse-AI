@@ -1,5 +1,8 @@
 import type { ApiResponse, CrimeForecast, CrimeTypeForecast, ForecastFilterOptions, ForecastFilters, ForecastRecommendation, ForecastRiskCalendarItem, ForecastSummary } from "../types/crime";
 import { readJsonOrLocalFallback } from "./localFallback";
+import { crimeService } from "./crimeService";
+import { toForecastFilterOptions } from "../utils/dynamicFilterOptions";
+import { buildCacheKey, cachedApiFetch, CACHE_TTL } from "../utils/apiCache";
 
 const forecastApiBase = import.meta.env.VITE_FORECAST_API_BASE || "/server/forecast-api";
 type ApiErrorPayload = { message?: string; error?: string; details?: string };
@@ -20,13 +23,18 @@ const queryString = (filters: ForecastFilters = {}) => {
 };
 
 const request = async <T>(path: string, filters?: ForecastFilters): Promise<T> => {
-  const response = await fetch(`${forecastApiBase}${path}${queryString(filters)}`);
-  if (!response.ok) {
-    const body: ApiErrorPayload = await readJsonOrLocalFallback<ApiErrorPayload>(response, path).catch(() => ({} as ApiErrorPayload));
-    const parts = [body.message, body.error, body.details].filter(Boolean);
-    throw new Error(parts.join(" | ") || `Forecast request failed with status ${response.status}`);
-  }
-  return readJsonOrLocalFallback<T>(response, path);
+  const endpoint = `${forecastApiBase}${path}${queryString(filters)}`;
+  return cachedApiFetch<T>(buildCacheKey(`forecast:${path}`, filters), endpoint, {
+    ttlMs: path.includes("filters") ? CACHE_TTL.filters : CACHE_TTL.analytics,
+    parseResponse: async (response) => {
+      if (!response.ok) {
+        const body: ApiErrorPayload = await readJsonOrLocalFallback<ApiErrorPayload>(response, path).catch(() => ({} as ApiErrorPayload));
+        const parts = [body.message, body.error, body.details].filter(Boolean);
+        throw new Error(parts.join(" | ") || `Forecast request failed with status ${response.status}`);
+      }
+      return readJsonOrLocalFallback<T>(response, path);
+    }
+  });
 };
 
 export const forecastService = {
@@ -40,5 +48,5 @@ export const forecastService = {
   getRiskCalendar: (filters?: ForecastFilters) => request<ApiResponse<ForecastRiskCalendarItem[]>>("/forecast/risk-calendar", filters),
   getRecommendations: (filters?: ForecastFilters) => request<ApiResponse<ForecastRecommendation[]>>("/forecast/recommendations", filters),
   getSummary: (filters?: ForecastFilters) => request<ApiResponse<ForecastSummary | null>>("/forecast/summary", filters),
-  getFilters: () => request<ApiResponse<ForecastFilterOptions>>("/forecast/filters")
+  getFilters: async () => ({ success: true, data: toForecastFilterOptions((await crimeService.getCrimeRecordFilters()).data) } as ApiResponse<ForecastFilterOptions>)
 };

@@ -70,6 +70,7 @@ const HomePage = () => (
         <h1 className="mt-7 max-w-3xl text-5xl font-semibold leading-[1.02] text-white sm:text-6xl lg:text-7xl">CrimePulse <span className="text-command-300">AI</span></h1>
         <p className="mt-6 max-w-3xl text-xl font-medium leading-8 text-command-100 sm:text-2xl">AI-Powered Crime Intelligence & Predictive Risk Dashboard for Karnataka Police</p>
         <p className="mt-6 max-w-2xl text-base leading-7 text-slate-300 sm:text-lg">Transform crime records into actionable intelligence through hotspot detection, temporal analysis, explainable risk signals, alerts, forecasting, and decision support.</p>
+        <p className="mt-4 max-w-2xl font-mono text-xs text-slate-400">Upload crime records to generate live dataset-specific metrics and intelligence.</p>
         <div className="mt-9 flex flex-col gap-3 sm:flex-row"><Link className="landing-primary-cta" to="/login"><LockKeyhole className="h-4 w-4" />Login to Command Center</Link><a className="landing-secondary-cta" href="#how-it-works">View Demo Journey <ArrowRight className="h-4 w-4" /></a></div>
         <div className="landing-security-row mt-9"><ShieldCheck className="h-4 w-4 text-command-300" /><span>Role-aware access and scoped intelligence views</span><span className="hidden h-1 w-1 rounded-full bg-command-500 sm:block" /><span className="hidden sm:inline">Built for data-informed policing</span></div>
       </div>

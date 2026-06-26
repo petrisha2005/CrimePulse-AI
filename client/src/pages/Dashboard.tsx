@@ -20,18 +20,22 @@ import {
 } from "../components/ChartPanel";
 import CrimeTable from "../components/CrimeTable";
 import DashboardCard from "../components/DashboardCard";
+import CurrentAnalysisScopeBanner from "../components/CurrentAnalysisScopeBanner";
+import { GuidedJourney, RecommendedNextStep } from "../components/ModuleGuide";
 import StateBlock from "../components/StateBlock";
 import NoDataState from "../components/NoDataState";
 import { useAuth } from "../auth/AuthContext";
+import { useDatasetAnalytics } from "../context/DatasetAnalyticsContext";
+import { useCrimeFilters } from "../hooks/useCrimeFilters";
 import { getScopeLabel } from "../auth/accessScope";
 import { dashboardService } from "../services/dashboardService";
-import { crimeService } from "../services/crimeService";
 import { downloadProfessionalWorkbook } from "../utils/professionalWorkbook";
 import type {
   ChartDatum,
   CrimeRecord,
   DashboardFilterOptions,
   DashboardFilters,
+  DashboardResponseMeta,
   DashboardSummary,
   GlobalStats,
   MonthlyTrend,
@@ -77,9 +81,9 @@ const SelectFilter = ({
       className="mt-2 min-h-11 w-full rounded-md border border-command-700 bg-command-850 px-3 text-sm normal-case tracking-normal text-white outline-none focus:border-command-300"
       value={value || "All"}
       onChange={(event) => onChange(event.target.value)}
-      disabled={locked}
+      disabled={locked || options.length === 0}
     >
-      <option value="All">All</option>
+      <option value="All">{options.length === 0 ? "No options available" : "All"}</option>
       {options.map((option) => (
         <option key={option} value={option}>
           {option}
@@ -87,6 +91,7 @@ const SelectFilter = ({
       ))}
     </select>
     {locked && <span className="mt-1 block normal-case tracking-normal text-[11px] text-command-300">Restricted by your role</span>}
+    {!locked && options.length === 0 && <span className="mt-1 block normal-case tracking-normal text-[11px] text-slate-500">No values exist in the current dataset.</span>}
   </label>
 );
 
@@ -99,6 +104,31 @@ const dashboardProfile = (role: string, district?: string, policeStation?: strin
 
 const hasActiveFilters = (filters: DashboardFilters) =>
   Object.values(filters).some((value) => {
+    const normalized = String(value ?? "").trim().toLowerCase();
+    return normalized !== "" && normalized !== "all";
+  });
+
+const dashboardFilterStorageKey = (userId?: string) => `crimepulse_dashboard_applied_filters_${userId || "anonymous"}`;
+
+const readStoredDashboardFilters = (key: string, fallback: DashboardFilters): DashboardFilters => {
+  try {
+    const parsed = JSON.parse(sessionStorage.getItem(key) || "null") as DashboardFilters | null;
+    return parsed ? { ...fallback, ...parsed } : fallback;
+  } catch {
+    return fallback;
+  }
+};
+
+const saveStoredDashboardFilters = (key: string, filters: DashboardFilters) => {
+  try {
+    sessionStorage.setItem(key, JSON.stringify(filters));
+  } catch {
+    // Session filter memory is only a navigation convenience.
+  }
+};
+
+const activeFilterEntries = (filters: object) =>
+  Object.entries(filters as Record<string, unknown>).filter(([, value]) => {
     const normalized = String(value ?? "").trim().toLowerCase();
     return normalized !== "" && normalized !== "all";
   });
@@ -134,17 +164,20 @@ const RankingTable = ({ title, data }: { title: string; data: ChartDatum[] }) =>
 );
 
 const Dashboard = () => {
-  const { currentUser, scopeParams, preferences, updatePreferences } = useAuth();
+  const { currentUser, scopeParams, preferences, updatePreferences, canAccessRoute } = useAuth();
+  const { totalRecords: sharedTotalRecords, globalStats: sharedGlobalStats, refreshAnalytics } = useDatasetAnalytics();
   const profile = dashboardProfile(currentUser?.role || "super_admin", currentUser?.assignedDistrict, currentUser?.assignedPoliceStation);
   const scopeLabel = getScopeLabel(currentUser);
   const scopedDefaults: DashboardFilters = { ...emptyFilters, ...scopeParams };
+  const filterStorageKey = dashboardFilterStorageKey(currentUser?.id);
+  const initialDashboardFilters = readStoredDashboardFilters(filterStorageKey, scopedDefaults);
   const districtLocked = Boolean(scopeParams.district);
   const stationLocked = Boolean(scopeParams.police_station);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
-  const [filters, setFilters] = useState<DashboardFilters>(scopedDefaults);
-  const [appliedFilters, setAppliedFilters] = useState<DashboardFilters>(scopedDefaults);
+  const [draftFilters, setDraftFilters] = useState<DashboardFilters>(initialDashboardFilters);
+  const [appliedFilters, setAppliedFilters] = useState<DashboardFilters>(initialDashboardFilters);
   const [filterOptions, setFilterOptions] = useState<DashboardFilterOptions>(emptyFilterOptions);
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [monthlyTrends, setMonthlyTrends] = useState<MonthlyTrend[]>([]);
@@ -158,18 +191,13 @@ const Dashboard = () => {
   const [complaintModes, setComplaintModes] = useState<ChartDatum[]>([]);
   const [recentRecords, setRecentRecords] = useState<CrimeRecord[]>([]);
   const [globalStats, setGlobalStats] = useState<GlobalStats | null>(null);
+  const [dashboardMeta, setDashboardMeta] = useState<DashboardResponseMeta | null>(null);
   const [storedRecordCount, setStoredRecordCount] = useState<number | null>(null);
   const [dashboardApiFailed, setDashboardApiFailed] = useState(false);
   const [dashboardErrorDetail, setDashboardErrorDetail] = useState("");
+  const dynamicFilterSource = useCrimeFilters({ selectedDistrict: draftFilters.district, selectedCrimeType: draftFilters.crime_type, userRole: currentUser?.role, assignedDistrict: currentUser?.assignedDistrict, assignedPoliceStation: currentUser?.assignedPoliceStation });
 
-  const loadFilterOptions = async () => {
-    try {
-      const response = await dashboardService.getFilters();
-      setFilterOptions(response.data);
-    } catch {
-      setFilterOptions(emptyFilterOptions);
-    }
-  };
+  useEffect(() => { setFilterOptions({ ...emptyFilterOptions, years: dynamicFilterSource.options.years, months: dynamicFilterSource.options.months, districts: dynamicFilterSource.options.districts, policeStations: dynamicFilterSource.options.policeStations, crimeTypes: dynamicFilterSource.options.crimeTypes, severities: dynamicFilterSource.options.severities, statuses: dynamicFilterSource.options.statuses }); }, [dynamicFilterSource.options]);
 
   const loadDashboard = async (nextFilters: DashboardFilters, silent = false) => {
     let latestRecordCount = storedRecordCount ?? 0;
@@ -180,12 +208,12 @@ const Dashboard = () => {
       setDashboardApiFailed(false);
       setDashboardErrorDetail("");
 
-      const countResponse = await crimeService.getCrimeCount();
-      const totalRecords = countResponse.totalRecords ?? countResponse.data?.totalRecords ?? 0;
+      const totalRecords = sharedTotalRecords || storedRecordCount || 0;
       latestRecordCount = totalRecords;
       setStoredRecordCount(totalRecords);
       if (totalRecords === 0) {
         setGlobalStats(null);
+        setDashboardMeta(null);
         setSummary(null);
         setMonthlyTrends([]);
         setYearlyTrends([]);
@@ -201,7 +229,6 @@ const Dashboard = () => {
       }
 
       const [
-        globalStatsRes,
         summaryRes,
         monthlyRes,
         yearlyRes,
@@ -214,7 +241,6 @@ const Dashboard = () => {
         complaintRes,
         recentRes
       ] = await Promise.all([
-        dashboardService.getGlobalStats(),
         dashboardService.getSummary(nextFilters),
         dashboardService.getMonthlyTrends(nextFilters),
         dashboardService.getYearlyTrends(nextFilters),
@@ -228,7 +254,8 @@ const Dashboard = () => {
         dashboardService.getRecentRecords(nextFilters)
       ]);
 
-      setGlobalStats(globalStatsRes.data);
+      setGlobalStats(sharedGlobalStats);
+      setDashboardMeta(summaryRes.meta || null);
       setSummary(summaryRes.data);
       setMonthlyTrends(monthlyRes.data);
       setYearlyTrends(yearlyRes.data);
@@ -256,27 +283,44 @@ const Dashboard = () => {
   };
 
   useEffect(() => {
-    loadFilterOptions();
-    setFilters(scopedDefaults);
-    setAppliedFilters(scopedDefaults);
-    loadDashboard(scopedDefaults);
-  }, [currentUser?.id]);
+    const storedFilters = readStoredDashboardFilters(filterStorageKey, scopedDefaults);
+    const nextFilters = { ...storedFilters, ...scopeParams };
+    setDraftFilters(nextFilters);
+    setAppliedFilters(nextFilters);
+    loadDashboard(nextFilters);
+  }, [currentUser?.id, sharedTotalRecords, sharedGlobalStats]);
 
   const updateFilter = (key: keyof DashboardFilters, value: string) => {
     if ((key === "district" && districtLocked) || (key === "police_station" && stationLocked)) return;
-    setFilters((current) => ({ ...current, [key]: value, ...scopeParams }));
+    setDraftFilters((current) => {
+      const next = { ...current, [key]: value, ...(key === "district" && !stationLocked ? { police_station: "All" } : {}), ...scopeParams };
+      if (import.meta.env.DEV) console.log("[Dashboard Filters] Draft filters:", next);
+      return next;
+    });
   };
 
   const applyFilters = () => {
-    const scopedFilters = { ...filters, ...scopeParams };
+    const scopedFilters = { ...draftFilters, ...scopeParams };
+    if (import.meta.env.DEV) {
+      console.log("[Dashboard Filters] Draft filters:", draftFilters);
+      console.log("[Dashboard Filters] Applied filters:", scopedFilters);
+    }
     setAppliedFilters(scopedFilters);
+    saveStoredDashboardFilters(filterStorageKey, scopedFilters);
     loadDashboard(scopedFilters, true);
   };
 
   const clearFilters = () => {
-    setFilters(scopedDefaults);
+    if (import.meta.env.DEV) console.log("[Dashboard Filters] Applied filters:", scopedDefaults);
+    setDraftFilters(scopedDefaults);
     setAppliedFilters(scopedDefaults);
+    saveStoredDashboardFilters(filterStorageKey, scopedDefaults);
     loadDashboard(scopedDefaults, true);
+  };
+
+  const refreshDashboard = async () => {
+    if (currentUser?.role === "super_admin") await refreshAnalytics({ rebuild: true });
+    await loadDashboard(appliedFilters, true);
   };
 
   const exportSummaryCsv = () => {
@@ -374,7 +418,10 @@ const Dashboard = () => {
   };
 
   const totalCrimes = summary?.totalCrimes ?? storedRecordCount ?? 0;
-  const filteredViewActive = hasActiveFilters(appliedFilters);
+  const filteredViewActive = dashboardMeta?.isFiltered ?? hasActiveFilters(appliedFilters);
+  const uploadedRecordCount = dashboardMeta?.totalUploadedRecords ?? globalStats?.total_uploaded_records ?? globalStats?.total_records ?? storedRecordCount ?? 0;
+  const recordsAnalyzed = dashboardMeta?.recordsAnalyzed ?? summary?.totalCrimes ?? uploadedRecordCount;
+  const filterLabels = activeFilterEntries(dashboardMeta?.appliedFilters || appliedFilters).map(([, value]) => String(value));
 
   if (loading) {
     return (
@@ -425,7 +472,7 @@ const Dashboard = () => {
         )}
         <button
           className="rounded-md bg-command-500 px-4 py-3 font-semibold text-white hover:bg-command-300 hover:text-command-950"
-          onClick={() => loadDashboard(appliedFilters, true)}
+          onClick={() => void refreshDashboard()}
           type="button"
         >
           Retry
@@ -434,7 +481,7 @@ const Dashboard = () => {
     );
   }
 
-  if (totalCrimes === 0) {
+  if (totalCrimes === 0 && (storedRecordCount ?? uploadedRecordCount) === 0) {
     return (
       <div className="space-y-6">
         <div>
@@ -446,6 +493,28 @@ const Dashboard = () => {
           </p>
         </div>
         <NoDataState currentUser={currentUser} moduleName="Crime Command Dashboard" />
+      </div>
+    );
+  }
+
+  if (totalCrimes === 0 && filteredViewActive && (storedRecordCount ?? uploadedRecordCount) > 0) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <p className="text-sm uppercase tracking-[0.18em] text-command-300">Crime Intelligence</p>
+          <h1 className="text-3xl font-semibold text-white">{profile.title}</h1>
+          <p className="mt-2 text-sm text-slate-400">{profile.subtitle}</p>
+        </div>
+        <section className="rounded-md border border-alert-medium/40 bg-command-900/85 p-6 text-center shadow-glow">
+          <h2 className="text-2xl font-semibold text-white">No records match the selected filters.</h2>
+          <p className="mx-auto mt-3 max-w-2xl text-sm leading-6 text-slate-400">
+            Showing 0 matching records from {uploadedRecordCount.toLocaleString()} uploaded records.
+            {filterLabels.length > 0 ? ` Filters: ${filterLabels.join(" · ")}` : ""}
+          </p>
+          <button className="mt-5 rounded-md bg-command-500 px-4 py-3 text-sm font-semibold text-white hover:bg-command-300 hover:text-command-950" onClick={clearFilters} type="button">
+            Clear Filters
+          </button>
+        </section>
       </div>
     );
   }
@@ -489,19 +558,40 @@ const Dashboard = () => {
 
       <p className="text-xs text-slate-500">CSV exports raw data. Use Professional Report for formatted Excel-style output.</p>
 
+      <CurrentAnalysisScopeBanner
+        meta={dashboardMeta}
+        filters={appliedFilters}
+        recordsAnalyzed={recordsAnalyzed}
+        districtCount={summary?.totalDistricts}
+        policeStationCount={summary?.totalPoliceStations}
+        coordinateCoverage={summary?.coordinateAvailablePercentage}
+        dataQuality={globalStats?.data_quality_score}
+        onClearFilters={filteredViewActive ? clearFilters : undefined}
+      />
+
+      <GuidedJourney canAccessRoute={canAccessRoute} />
+      {canAccessRoute("/alerts-patterns") && <RecommendedNextStep title="Check Alerts & Pattern Detection" description="Use anomaly signals to focus attention on emerging or unusually concentrated crime patterns." to="/alerts-patterns" action="View Signals" />}
+
       <section className="rounded-md border border-command-700 bg-command-900/85 p-5 shadow-glow">
         <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
           <h2 className="text-base font-semibold text-white">Filters</h2>
           <div className="flex flex-wrap gap-2"><span className="rounded border border-command-500/40 bg-command-500/10 px-3 py-1 text-xs font-semibold text-command-300">{scopeLabel}</span><span className={`rounded border px-3 py-1 text-xs font-semibold ${filteredViewActive ? "border-alert-medium/40 bg-alert-medium/10 text-alert-medium" : "border-alert-low/40 bg-alert-low/10 text-alert-low"}`}>{filteredViewActive ? "Filtered view active" : "Showing all records"}</span></div>
         </div>
+        <div className="mt-4 rounded border border-command-700 bg-command-850 p-3 text-sm text-slate-300">
+          {filterLabels.length > 0 ? (
+            <p className="text-safe">Active filters: <span className="font-semibold text-white">{filterLabels.join(" · ")}</span></p>
+          ) : (
+            <p className="text-safe">No optional filters selected. Dashboard is using the current role scope and uploaded dataset.</p>
+          )}
+        </div>
         <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <SelectFilter label="FIR Year" value={filters.fir_year} options={filterOptions.years} onChange={(value) => updateFilter("fir_year", value)} />
-          <SelectFilter label="FIR Month" value={filters.fir_month} options={filterOptions.months} onChange={(value) => updateFilter("fir_month", value)} />
-          <SelectFilter label="District" value={filters.district} options={filterOptions.districts} onChange={(value) => updateFilter("district", value)} locked={districtLocked} />
-          <SelectFilter label="Police Station" value={filters.police_station} options={filterOptions.policeStations} onChange={(value) => updateFilter("police_station", value)} locked={stationLocked} />
-          <SelectFilter label="Crime Group" value={filters.crime_type} options={filterOptions.crimeTypes} onChange={(value) => updateFilter("crime_type", value)} />
-          <SelectFilter label="FIR Type / Severity" value={filters.severity} options={filterOptions.severities} onChange={(value) => updateFilter("severity", value)} />
-          <SelectFilter label="FIR Stage" value={filters.fir_stage} options={filterOptions.statuses} onChange={(value) => updateFilter("fir_stage", value)} />
+          <SelectFilter label="FIR Year" value={draftFilters.fir_year} options={filterOptions.years} onChange={(value) => updateFilter("fir_year", value)} />
+          <SelectFilter label="FIR Month" value={draftFilters.fir_month} options={filterOptions.months} onChange={(value) => updateFilter("fir_month", value)} />
+          <SelectFilter label="District" value={draftFilters.district} options={filterOptions.districts} onChange={(value) => updateFilter("district", value)} locked={districtLocked} />
+          <SelectFilter label="Police Station" value={draftFilters.police_station} options={filterOptions.policeStations} onChange={(value) => updateFilter("police_station", value)} locked={stationLocked} />
+          <SelectFilter label="Crime Group" value={draftFilters.crime_type} options={filterOptions.crimeTypes} onChange={(value) => updateFilter("crime_type", value)} />
+          <SelectFilter label="FIR Type / Severity" value={draftFilters.severity} options={filterOptions.severities} onChange={(value) => updateFilter("severity", value)} />
+          <SelectFilter label="FIR Stage" value={draftFilters.fir_stage} options={filterOptions.statuses} onChange={(value) => updateFilter("fir_stage", value)} />
         </div>
         <div className="mt-5 flex flex-wrap gap-3">
           <button className="rounded-md bg-command-500 px-4 py-3 text-sm font-semibold text-white hover:bg-command-300 hover:text-command-950" onClick={applyFilters} type="button">

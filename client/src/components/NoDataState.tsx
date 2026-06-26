@@ -1,7 +1,10 @@
-import { Database, Download, FileCheck2, Radar, UploadCloud } from "lucide-react";
+import { Database, Download, UploadCloud } from "lucide-react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import type { CrimePulseUser } from "../auth/users";
+import { useAuth } from "../auth/AuthContext";
 import { sampleCrimeCsv } from "../utils/crimeCsvConfig";
+import { GuidedJourney } from "./ModuleGuide";
 
 const contentFor = (user: CrimePulseUser | null, moduleName: string) => {
   if (user?.role === "super_admin") {
@@ -29,18 +32,18 @@ const downloadSampleCsv = () => {
   URL.revokeObjectURL(url);
 };
 
-const workflow = [["1", "Upload CSV", UploadCloud], ["2", "Validate & Store Records", FileCheck2], ["3", "Generate Intelligence", Radar], ["4", "Explore Reports", Database]] as const;
-
 const NoDataState = ({ currentUser, moduleName, dashboard = false }: { currentUser: CrimePulseUser | null; moduleName: string; dashboard?: boolean }) => {
   const content = contentFor(currentUser, moduleName);
+  const { canAccessRoute } = useAuth();
+  const [showJourney, setShowJourney] = useState(false);
   return (
     <section className="card-safe border border-command-700 bg-command-900/85 p-7 text-center shadow-glow sm:p-10">
       <Database className="mx-auto h-8 w-8 text-command-300" />
       <p className="mt-4 text-xs font-semibold uppercase tracking-[0.16em] text-command-300">Fresh Demo Mode</p>
       <h2 className="mt-2 text-xl font-semibold text-white">{content.title}</h2>
       <p className="mx-auto mt-3 max-w-2xl text-sm leading-6 text-slate-400">{dashboard ? "Upload a FIR/crime CSV file to generate dashboards, alerts, hotspot maps, forecasts, AI insights, and reports." : content.message}</p>
-      {content.canUpload && <div className="mt-6 flex flex-wrap justify-center gap-3"><Link className="inline-flex min-h-11 items-center justify-center gap-2 bg-command-500 px-4 py-3 text-sm font-semibold text-white hover:bg-command-300 hover:text-command-950" to="/upload"><UploadCloud className="h-4 w-4" />Upload Crime Data</Link>{dashboard && <button className="inline-flex min-h-11 items-center justify-center gap-2 border border-command-700 px-4 py-3 text-sm font-semibold text-slate-200 hover:bg-command-850" onClick={downloadSampleCsv} type="button"><Download className="h-4 w-4" />Download Sample CSV</button>}</div>}
-      {dashboard && <div className="mx-auto mt-9 grid max-w-4xl gap-3 text-left sm:grid-cols-2 lg:grid-cols-4">{workflow.map(([step, label, Icon]) => <div key={step} className="border border-command-700 bg-command-850 p-4"><span className="flex h-7 w-7 items-center justify-center rounded-full bg-command-500/15 text-xs font-semibold text-command-300">{step}</span><Icon className="mt-4 h-5 w-5 text-command-300" /><p className="mt-3 text-sm font-semibold text-white">{label}</p></div>)}</div>}
+      <div className="mt-6 flex flex-wrap justify-center gap-3">{content.canUpload && <Link className="inline-flex min-h-11 items-center justify-center gap-2 bg-command-500 px-4 py-3 text-sm font-semibold text-white hover:bg-command-300 hover:text-command-950" to="/upload"><UploadCloud className="h-4 w-4" />Upload Crime Data</Link>}{dashboard && content.canUpload && <button className="inline-flex min-h-11 items-center justify-center gap-2 border border-command-700 px-4 py-3 text-sm font-semibold text-slate-200 hover:bg-command-850" onClick={downloadSampleCsv} type="button"><Download className="h-4 w-4" />Download Sample CSV</button>}{dashboard && <button className="inline-flex min-h-11 items-center justify-center gap-2 border border-command-700 px-4 py-3 text-sm font-semibold text-slate-200 hover:bg-command-850" onClick={() => setShowJourney((visible) => !visible)} type="button">{showJourney ? "Hide Demo Journey" : "View Demo Journey"}</button>}</div>
+      {dashboard && showJourney && <div className="mt-8 text-left"><GuidedJourney canAccessRoute={canAccessRoute} /></div>}
     </section>
   );
 };

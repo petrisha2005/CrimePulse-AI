@@ -4,6 +4,7 @@ import type { Permission } from "./permissions";
 import { routeModules, routePermissions } from "./permissions";
 import { canAccessModule, getUserScopeParams } from "./accessScope";
 import type { CrimePulseUser, UserPreferences } from "./users";
+import { invalidateCrimePulseCache } from "../utils/apiCache";
 
 interface AuthContextValue {
   currentUser: CrimePulseUser | null;
@@ -53,12 +54,13 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     login: async (email, password) => {
       const result = await authService.login(email, password);
       if (result.success && result.user) {
+        invalidateCrimePulseCache();
         setCurrentUser(result.user);
         setPreferences(loadPreferences(result.user));
       }
       return result;
     },
-    logout: async () => { await authService.logout(); setCurrentUser(null); setPreferences(null); },
+    logout: async () => { await authService.logout(); invalidateCrimePulseCache(); setCurrentUser(null); setPreferences(null); },
     hasPermission: (permission) => !permission || Boolean(currentUser?.permissions.includes(permission)),
     canAccessRoute: (route) => {
       const permissionAllowed = !routePermissions[route] || Boolean(currentUser?.permissions.includes(routePermissions[route]));

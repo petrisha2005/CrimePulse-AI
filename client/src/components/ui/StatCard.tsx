@@ -1,3 +1,4 @@
+import { Info } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import AutoFitText from "./AutoFitText";
 
@@ -10,6 +11,7 @@ interface StatCardProps {
   maxValueLines?: 1 | 2 | 3;
   className?: string;
   valueClassName?: string;
+  helpText?: string;
 }
 
 const toneMap = {
@@ -19,10 +21,10 @@ const toneMap = {
   red: "border-alert-critical/40 text-alert-critical"
 };
 
-const StatCard = ({ label, value, subtitle, icon: Icon, tone = "blue", maxValueLines = 3, className = "", valueClassName = "" }: StatCardProps) => (
+const StatCard = ({ label, value, subtitle, icon: Icon, tone = "blue", maxValueLines = 3, className = "", valueClassName = "", helpText }: StatCardProps) => (
   <section className={`card-safe flex h-full min-h-[136px] flex-col rounded-md border border-command-700 bg-command-900/85 p-5 shadow-glow ${className}`}>
     <div className="flex min-w-0 items-start justify-between gap-4">
-      <AutoFitText value={label} variant="label" maxLines={2} />
+      <div className="flex min-w-0 items-start gap-1.5"><AutoFitText value={label} variant="label" maxLines={2} />{helpText && <span className="mt-0.5 shrink-0 text-slate-400" aria-label={`${label}: ${helpText}`} role="img" title={helpText}><Info className="h-3.5 w-3.5" aria-hidden="true" /></span>}</div>
       <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded border bg-command-850 ${toneMap[tone]}`}>
         <Icon className="h-6 w-6" />
       </div>

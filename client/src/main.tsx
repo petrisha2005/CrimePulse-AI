@@ -8,6 +8,7 @@ import { initCatalyst } from "./services/authService";
 import { getRouterBasename } from "./utils/routerBase";
 import { getActiveDatasetId } from "./services/datasetScope";
 import { AuthProvider } from "./auth/AuthContext";
+import { DatasetAnalyticsProvider } from "./context/DatasetAnalyticsContext";
 import { getStoredAuthUser, withUserScope } from "./lib/api";
 
 initCatalyst();
@@ -35,7 +36,7 @@ console.log("[CrimePulse AI] Router basename:", basename);
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <ErrorBoundary>
-      <AuthProvider><BrowserRouter basename={basename}><App /></BrowserRouter></AuthProvider>
+      <AuthProvider><DatasetAnalyticsProvider><BrowserRouter basename={basename}><App /></BrowserRouter></DatasetAnalyticsProvider></AuthProvider>
     </ErrorBoundary>
   </React.StrictMode>
 );

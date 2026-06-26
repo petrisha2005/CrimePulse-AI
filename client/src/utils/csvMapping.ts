@@ -82,8 +82,10 @@ export const analyzeFlexibleCsv = (file: File, mapping: Record<string, string>, 
   let totalRows = 0;
   let warningRows = 0;
   const districts = new Set<string>();
+  const policeStations = new Set<string>();
   const crimeTypes = new Set<string>();
   const years = new Set<number>();
+  let coordinateRows = 0;
   Papa.parse<Record<string, string>>(file, {
     header: true,
     skipEmptyLines: true,
@@ -97,14 +99,20 @@ export const analyzeFlexibleCsv = (file: File, mapping: Record<string, string>, 
         const year = Number(row[mapping.fir_year]);
         if (!district && !station || !type || (!year && !row[mapping.crime_date])) warningRows += 1;
         if (district && districts.size < 100) districts.add(district);
+        if (station && policeStations.size < 100) policeStations.add(station);
         if (type && crimeTypes.size < 100) crimeTypes.add(type);
         if (Number.isFinite(year) && year > 1900) years.add(year);
+        const latitudeSource = mapping.latitude_value ? String(row[mapping.latitude_value] || "").trim() : "";
+        const longitudeSource = mapping.longitude_value ? String(row[mapping.longitude_value] || "").trim() : "";
+        const latitude = Number(latitudeSource);
+        const longitude = Number(longitudeSource);
+        if (latitudeSource && longitudeSource && Number.isFinite(latitude) && Number.isFinite(longitude)) coordinateRows += 1;
       });
       onProgress?.(totalRows);
     },
     complete: () => {
       const orderedYears = [...years].sort((a, b) => a - b);
-      resolve({ totalRows, validRows: Math.max(totalRows - warningRows, 0), warningRows, detectedDistricts: [...districts], detectedCrimeTypes: [...crimeTypes], detectedDateRange: orderedYears.length ? `${orderedYears[0]}-${orderedYears[orderedYears.length - 1]}` : "No date range detected" });
+      resolve({ totalRows, validRows: Math.max(totalRows - warningRows, 0), warningRows, detectedDistricts: [...districts], detectedPoliceStations: [...policeStations], detectedCrimeTypes: [...crimeTypes], detectedDateRange: orderedYears.length ? `${orderedYears[0]}-${orderedYears[orderedYears.length - 1]}` : "No date range detected", coordinateAvailablePercentage: totalRows ? Math.round((coordinateRows / totalRows) * 100) : 0 });
     },
     error: (error) => reject(error)
   });

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Download, Eye, FileText, Loader2, Printer, RefreshCw, Search, ShieldCheck, Target } from "lucide-react";
 import StateBlock from "../components/StateBlock";
 import { MotionButton, MotionSection } from "../components/animation";
@@ -6,14 +6,16 @@ import { useAuth } from "../auth/AuthContext";
 import { crimeService } from "../services/crimeService";
 import { reportService, type ReportSummary } from "../services/reportService";
 import type { DashboardFilterOptions, GeneratedReportResponse, ReportFilters, ReportRequest } from "../types/crime";
+import { downloadReportPdf, reportDownloadFilename } from "../utils/reportPdf";
 
 const reportTypes = [
-  { value: "executive-summary", label: "Executive Summary" },
-  { value: "district-report", label: "District Report" },
-  { value: "risk-report", label: "Risk Report" },
-  { value: "hotspot-report", label: "Hotspot Report" },
-  { value: "forecast-report", label: "Forecast Report" },
-  { value: "full-intelligence-report", label: "Full Intelligence Report" }
+  { value: "executive-summary", label: "Executive Summary Report", description: "Short leadership briefing with dataset scope, key findings, top risk areas, and recommended actions." },
+  { value: "full-intelligence-report", label: "Full Intelligence Report", description: "Complete operational report covering distribution, risk, alerts, patterns, trends, geo coverage, case progress, and limitations." },
+  { value: "district-report", label: "District Risk Report", description: "District and police-station risk report focused on volume, severity, crime types, and district-level actions." },
+  { value: "red-zone-alerts-report", label: "Red-Zone Alerts Report", description: "Urgent anomaly and red-zone report focused on high-risk locations, spike signals, and operational response." },
+  { value: "hotspot-map-report", label: "Hotspot Map Report", description: "Geo-intelligence report explaining coordinate coverage, fallback mapping, hotspots, and map limitations." },
+  { value: "crime-trend-forecast-report", label: "Crime Trend & Forecast Report", description: "Time-based report covering year/month trends, peak periods, category movement, and preventive planning." },
+  { value: "fir-stage-case-progress-report", label: "FIR Stage / Case Progress Report", description: "Case progress report focused on FIR stages, arrests, convictions, resolution gaps, and follow-up actions." }
 ];
 
 const sectionOptions = [
@@ -88,6 +90,7 @@ const printReport = (report: GeneratedReportResponse) => {
 
 const AiReport = () => {
   const { scopeParams } = useAuth();
+  const reportPreviewRef = useRef<HTMLDivElement | null>(null);
   const [filterOptions, setFilterOptions] = useState<DashboardFilterOptions>(emptyOptions);
   const [request, setRequest] = useState<ReportRequest>({
     report_type: DEFAULT_REPORT_TYPE,
@@ -100,6 +103,8 @@ const AiReport = () => {
   const [storedCount, setStoredCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const [previewing, setPreviewing] = useState(false);
+  const [pdfGenerating, setPdfGenerating] = useState(false);
+  const [pdfMessage, setPdfMessage] = useState("");
   const [error, setError] = useState("");
   const [apiError, setApiError] = useState("");
 
@@ -107,6 +112,7 @@ const AiReport = () => {
   const hasFilters = Object.keys(activeFilters).length > 0;
   const districtLocked = Boolean(scopeParams.district);
   const policeStationLocked = Boolean(scopeParams.police_station);
+  const selectedReportType = reportTypes.find((type) => type.value === request.report_type) || reportTypes[1];
 
   const loadMeta = async () => {
     setApiError("");
@@ -180,6 +186,20 @@ const AiReport = () => {
     }
   };
 
+  const handleDownloadPdf = async (currentReport: GeneratedReportResponse) => {
+    try {
+      setPdfGenerating(true);
+      setPdfMessage("Generating PDF...");
+      await downloadReportPdf(currentReport);
+      setPdfMessage("PDF downloaded successfully.");
+    } catch (err) {
+      console.error("[AI Report] PDF generation failed", err);
+      setPdfMessage("PDF generation failed. Please use Print Report as fallback.");
+    } finally {
+      setPdfGenerating(false);
+    }
+  };
+
   const handleClearFilters = () => {
     setRequest({
       report_type: DEFAULT_REPORT_TYPE,
@@ -192,6 +212,8 @@ const AiReport = () => {
     setApiError("");
     setLoading(false);
     setPreviewing(false);
+    setPdfGenerating(false);
+    setPdfMessage("");
     void loadMeta();
   };
 
@@ -250,6 +272,11 @@ const AiReport = () => {
           <SelectFilter label="FIR Stage" value={request.filters.fir_stage} options={filterOptions.statuses} onChange={(value) => updateFilter("fir_stage", value)} />
         </div>
 
+        <div className="text-safe mt-4 rounded-md border border-command-500/30 bg-command-500/10 p-4 text-sm leading-6 text-slate-300">
+          <span className="font-semibold text-command-300">{selectedReportType.label}: </span>
+          {selectedReportType.description}
+        </div>
+
         <div className="mt-5">
           <p className="text-xs font-medium uppercase tracking-[0.14em] text-slate-500">Report Sections</p>
           <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
@@ -291,17 +318,22 @@ const AiReport = () => {
                 <p className="mt-1 text-sm text-slate-400">Generated {new Date(report.generated_at).toLocaleString()} from {report.records_analyzed.toLocaleString()} records</p>
               </div>
               <div className="flex flex-wrap gap-2">
-                <MotionButton variant="ghost" onClick={() => downloadText(`${report.report_id}.html`, report.html, "text/html")}><Download className="h-4 w-4" />HTML</MotionButton>
-                <button className="flex min-h-10 items-center gap-2 rounded-md border border-command-700 bg-command-850 px-3 text-sm font-semibold text-slate-200 hover:bg-command-800" onClick={() => downloadText(`${report.report_id}.md`, report.markdown, "text/markdown")} type="button">
+                <button className="flex min-h-10 items-center gap-2 rounded-md bg-command-500 px-3 text-sm font-semibold text-white hover:bg-command-300 hover:text-command-950 disabled:cursor-wait disabled:opacity-70" disabled={pdfGenerating} onClick={() => handleDownloadPdf(report)} type="button">
+                  {pdfGenerating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                  {pdfGenerating ? "Generating PDF..." : "Download PDF"}
+                </button>
+                <MotionButton variant="ghost" onClick={() => downloadText(reportDownloadFilename(report, "html"), report.html, "text/html")}><Download className="h-4 w-4" />Download HTML</MotionButton>
+                <button className="flex min-h-10 items-center gap-2 rounded-md border border-command-700 bg-command-850 px-3 text-sm font-semibold text-slate-200 hover:bg-command-800" onClick={() => downloadText(reportDownloadFilename(report, "md"), report.markdown, "text/markdown")} type="button">
                   <Download className="h-4 w-4" />
                   Markdown
                 </button>
-                <button className="flex min-h-10 items-center gap-2 rounded-md bg-command-500 px-3 text-sm font-semibold text-white hover:bg-command-300 hover:text-command-950" onClick={() => printReport(report)} type="button">
+                <button className="flex min-h-10 items-center gap-2 rounded-md border border-command-700 bg-command-850 px-3 text-sm font-semibold text-slate-200 hover:bg-command-800" onClick={() => printReport(report)} type="button">
                   <Printer className="h-4 w-4" />
-                  Print / PDF
+                  Print Report
                 </button>
               </div>
             </div>
+            {pdfMessage && <p className={`mt-3 text-sm ${pdfMessage.includes("failed") ? "text-alert-high" : "text-command-300"}`}>{pdfMessage}</p>}
           </section></MotionSection>
 
           <MotionSection delay={200}><section className="grid gap-4 lg:grid-cols-2">
@@ -325,7 +357,7 @@ const AiReport = () => {
           <MotionSection delay={400}><section className="rounded-md border border-command-700 bg-command-900/85 p-5 shadow-glow report-reveal-section">
             <h2 className="text-base font-semibold text-white">White Paper Preview</h2>
             <div className="mt-4 max-h-[760px] overflow-auto rounded-md border border-slate-200 bg-white p-6 text-slate-950 shadow-xl">
-              <div className="prose prose-slate max-w-none" dangerouslySetInnerHTML={{ __html: report.html }} />
+              <div ref={reportPreviewRef} className="report-print-content prose prose-slate max-w-none" dangerouslySetInnerHTML={{ __html: report.html }} />
             </div>
           </section></MotionSection>
         </>

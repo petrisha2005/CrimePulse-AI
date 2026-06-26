@@ -18,6 +18,7 @@ const AVAILABLE_ROUTES = [
   "GET /alerts",
   "GET /alerts/summary",
   "GET /alerts/anomalies",
+  "GET /alerts/time-risk",
   "GET /alerts/pattern-whispers",
   "GET /alerts/charts",
   "GET /alerts/filters"
@@ -401,6 +402,239 @@ function toAnomaly(alert) {
   };
 }
 
+const TIME_FIELD_CANDIDATES = ["crime_time", "fir_time", "offence_time", "incident_time", "time", "hour"];
+const CREATED_TIME_FIELD = "created_time";
+const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+const WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const TIME_WINDOWS = [
+  { label: "Late Night", range: "12 AM – 4 AM", start: 0, end: 4 },
+  { label: "Early Morning", range: "4 AM – 8 AM", start: 4, end: 8 },
+  { label: "Morning", range: "8 AM – 12 PM", start: 8, end: 12 },
+  { label: "Afternoon", range: "12 PM – 4 PM", start: 12, end: 16 },
+  { label: "Evening", range: "4 PM – 8 PM", start: 16, end: 20 },
+  { label: "Night", range: "8 PM – 12 AM", start: 20, end: 24 }
+];
+
+function rawRecordValue(record, field) {
+  return record?.[field] ?? record?.CrimeRecords?.[field] ?? "";
+}
+
+function parseHour(value) {
+  const raw = clean(value);
+  if (!raw) return null;
+
+  const numeric = Number(raw);
+  if (Number.isFinite(numeric) && numeric >= 0 && numeric < 24) return Math.floor(numeric);
+
+  const amPmMatch = raw.match(/\b(\d{1,2})(?::(\d{2}))?\s*(AM|PM)\b/i);
+  if (amPmMatch) {
+    let hour = Number(amPmMatch[1]);
+    if (!Number.isFinite(hour) || hour < 1 || hour > 12) return null;
+    const meridian = amPmMatch[3].toUpperCase();
+    if (meridian === "PM" && hour !== 12) hour += 12;
+    if (meridian === "AM" && hour === 12) hour = 0;
+    return hour;
+  }
+
+  const timeMatch = raw.match(/\b([01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?\b/);
+  if (timeMatch) return Number(timeMatch[1]);
+
+  const parsedDate = new Date(raw);
+  if (!Number.isNaN(parsedDate.getTime()) && /t|\d{1,2}:\d{2}/i.test(raw)) return parsedDate.getHours();
+
+  return null;
+}
+
+function timeWindowForHour(hour) {
+  return TIME_WINDOWS.find((window) => hour >= window.start && hour < window.end) || TIME_WINDOWS[0];
+}
+
+function monthName(value) {
+  const month = Number(value);
+  return Number.isFinite(month) && month >= 1 && month <= 12 ? MONTH_NAMES[month - 1] : "";
+}
+
+function parseRecordDate(record) {
+  const direct = clean(record.crime_date);
+  const parsedDirect = direct ? new Date(direct) : null;
+  if (parsedDirect && !Number.isNaN(parsedDirect.getTime())) return parsedDirect;
+  const year = Number(record.fir_year);
+  const month = Number(record.fir_month);
+  const day = Number(record.fir_day);
+  if (Number.isFinite(year) && Number.isFinite(month) && Number.isFinite(day) && year > 1900 && month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+    const parsed = new Date(year, month - 1, day);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+  return null;
+}
+
+function confidenceFromEvidence(evidenceCount, groupTotal, hasExactTime) {
+  const share = groupTotal ? evidenceCount / groupTotal : 0;
+  if (hasExactTime && evidenceCount >= 20 && share >= 0.35) return "High";
+  if (evidenceCount >= 10 && share >= 0.25) return "Medium";
+  return "Low";
+}
+
+function getTimeField(records) {
+  for (const field of TIME_FIELD_CANDIDATES) {
+    const valid = records.filter((record) => parseHour(rawRecordValue(record, field)) !== null).length;
+    if (valid >= Math.min(5, Math.max(1, records.length))) return { field, usesCreatedTime: false };
+  }
+
+  const createdValid = records.filter((record) => parseHour(rawRecordValue(record, CREATED_TIME_FIELD)) !== null).length;
+  if (createdValid >= Math.min(5, Math.max(1, records.length))) return { field: CREATED_TIME_FIELD, usesCreatedTime: true };
+  return null;
+}
+
+function groupTimeRiskScopes(records) {
+  const scopedGroups = new Map();
+  records.forEach((record) => {
+    const district = clean(record.district) || "Karnataka";
+    const station = clean(record.police_station) || "All Stations";
+    const crimeType = clean(record.crime_type) || "Crime";
+    const key = `${district}||${station}||${crimeType}`;
+    if (!scopedGroups.has(key)) {
+      scopedGroups.set(key, { district, policeStation: station, crimeType, records: [] });
+    }
+    scopedGroups.get(key).records.push(record);
+  });
+
+  return [...scopedGroups.values()]
+    .filter((group) => group.records.length >= 3)
+    .sort((a, b) => b.records.length - a.records.length)
+    .slice(0, 20);
+}
+
+function buildExactTimeRiskAlerts(records, timeField) {
+  return groupTimeRiskScopes(records)
+    .map((group, index) => {
+      const counts = TIME_WINDOWS.map((window) => ({ ...window, count: 0 }));
+      group.records.forEach((record) => {
+        const hour = parseHour(rawRecordValue(record, timeField.field));
+        if (hour === null) return;
+        const window = timeWindowForHour(hour);
+        const match = counts.find((item) => item.label === window.label);
+        if (match) match.count += 1;
+      });
+      const topWindow = counts.sort((a, b) => b.count - a.count)[0];
+      if (!topWindow || topWindow.count === 0) return null;
+      const location = group.policeStation && group.policeStation !== "All Stations" ? group.policeStation : group.district;
+      const confidence = confidenceFromEvidence(topWindow.count, group.records.length, true);
+      return {
+        alert_id: `time-risk-${index}-${clean(group.district).toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${clean(group.crimeType).toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+        crimeType: group.crimeType,
+        crime_type: group.crimeType,
+        district: group.district,
+        policeStation: group.policeStation,
+        police_station: group.policeStation,
+        riskWindow: `${topWindow.label}, ${topWindow.range}`,
+        risk_window: `${topWindow.label}, ${topWindow.range}`,
+        riskPeriod: null,
+        risk_period: null,
+        hasExactTime: true,
+        has_exact_time: true,
+        timeSourceField: timeField.field,
+        time_source_field: timeField.field,
+        evidenceCount: topWindow.count,
+        evidence_count: topWindow.count,
+        confidence,
+        message: `Be alert: ${group.crimeType} risk is higher in ${location} during ${topWindow.label.toLowerCase()} hours (${topWindow.range}).`,
+        suggestedAction: `${recommendedAction(group.crimeType)} Increase beat visibility and patrol coverage during ${topWindow.range}.`,
+        suggested_action: `${recommendedAction(group.crimeType)} Increase beat visibility and patrol coverage during ${topWindow.range}.`
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.evidenceCount - a.evidenceCount)
+    .slice(0, 8);
+}
+
+function buildFallbackTimeRiskAlerts(records, timeField) {
+  return groupTimeRiskScopes(records)
+    .map((group, index) => {
+      const monthCounts = {};
+      const weekdayCounts = {};
+      const dayWindowCounts = { "month-start": 0, "mid-month": 0, "month-end": 0 };
+
+      group.records.forEach((record) => {
+        const month = monthName(record.fir_month);
+        if (month) monthCounts[month] = (monthCounts[month] || 0) + 1;
+
+        const parsedDate = parseRecordDate(record);
+        if (parsedDate) {
+          const weekday = WEEKDAY_NAMES[parsedDate.getDay()];
+          weekdayCounts[weekday] = (weekdayCounts[weekday] || 0) + 1;
+        }
+
+        const day = Number(record.fir_day);
+        if (Number.isFinite(day) && day >= 1 && day <= 31) {
+          if (day <= 10) dayWindowCounts["month-start"] += 1;
+          else if (day <= 20) dayWindowCounts["mid-month"] += 1;
+          else dayWindowCounts["month-end"] += 1;
+        }
+      });
+
+      const topMonths = Object.entries(monthCounts).sort((a, b) => b[1] - a[1]).slice(0, 2);
+      const topWeekday = Object.entries(weekdayCounts).sort((a, b) => b[1] - a[1])[0];
+      const topDayWindow = Object.entries(dayWindowCounts).sort((a, b) => b[1] - a[1])[0];
+      const topMonthText = topMonths.map(([name]) => name).join(" and ");
+      const evidenceCount = Number(topMonths[0]?.[1] || topWeekday?.[1] || topDayWindow?.[1] || group.records.length);
+      if (!topMonthText && !topWeekday && !topDayWindow) return null;
+
+      const readableDayWindow = topDayWindow?.[0] === "month-end" ? "month-end reporting windows" : topDayWindow?.[0] === "month-start" ? "month-start reporting windows" : "mid-month reporting windows";
+      const period = topMonthText || topWeekday?.[0] || readableDayWindow;
+      const location = group.policeStation && group.policeStation !== "All Stations" ? `${group.district} / ${group.policeStation}` : group.district;
+      const confidence = confidenceFromEvidence(evidenceCount, group.records.length, false);
+      const sourceNote = timeField?.usesCreatedTime ? "Created-time values are present, but no incident-time field was found." : "Exact incident hour is not available in uploaded data.";
+      return {
+        alert_id: `time-risk-fallback-${index}-${clean(group.district).toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${clean(group.crimeType).toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+        crimeType: group.crimeType,
+        crime_type: group.crimeType,
+        district: group.district,
+        policeStation: group.policeStation,
+        police_station: group.policeStation,
+        riskWindow: null,
+        risk_window: null,
+        riskPeriod: period,
+        risk_period: period,
+        hasExactTime: false,
+        has_exact_time: false,
+        timeSourceField: timeField?.field || "",
+        time_source_field: timeField?.field || "",
+        evidenceCount,
+        evidence_count: evidenceCount,
+        confidence,
+        message: `${sourceNote} Based on FIR date trends, ${group.crimeType} reporting is higher in ${period} for ${location}.`,
+        suggestedAction: `Review previous FIR clusters and plan preventive checks during high-reporting periods. ${recommendedAction(group.crimeType)}`,
+        suggested_action: `Review previous FIR clusters and plan preventive checks during high-reporting periods. ${recommendedAction(group.crimeType)}`
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.evidenceCount - a.evidenceCount)
+    .slice(0, 8);
+}
+
+function buildTimeRiskAlerts(records) {
+  if (!records.length) {
+    return {
+      has_exact_time_data: false,
+      exact_time_field: "",
+      message: "No crime records available for time-based alert intelligence.",
+      alerts: []
+    };
+  }
+  const timeField = getTimeField(records);
+  const useExactTime = Boolean(timeField && !timeField.usesCreatedTime);
+  const alerts = useExactTime ? buildExactTimeRiskAlerts(records, timeField) : buildFallbackTimeRiskAlerts(records, timeField);
+  return {
+    has_exact_time_data: useExactTime,
+    exact_time_field: useExactTime ? timeField.field : "",
+    message: useExactTime
+      ? `Hour-level risk windows are calculated from ${timeField.field}.`
+      : "Exact incident hour not available in uploaded data. Showing FIR date, month, and reporting-period patterns instead.",
+    alerts
+  };
+}
+
 module.exports = async (req, res) => {
   const method = req.method;
   const path = getPath(req, SERVICE_NAME);
@@ -425,6 +659,7 @@ module.exports = async (req, res) => {
 
     if (method === "GET" && path === "/alerts") return send(res, 200, { success: true, data: alerts });
     if (method === "GET" && path === "/alerts/anomalies") return send(res, 200, { success: true, data: alerts.map(toAnomaly) });
+    if (method === "GET" && path === "/alerts/time-risk") return send(res, 200, { success: true, data: buildTimeRiskAlerts(records) });
     if (method === "GET" && path === "/alerts/summary") {
       return send(res, 200, {
         success: true,

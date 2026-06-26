@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
-import { AlertOctagon, BellRing, Clock, Flame, MapPinned, RefreshCw, ShieldAlert, Siren } from "lucide-react";
+import { AlertOctagon, BellRing, Clock, Eye, Flame, MapPinned, RefreshCw, ShieldAlert, Siren, X } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { DistributionPieChart, RankingBarChart } from "../components/ChartPanel";
 import DashboardCard from "../components/DashboardCard";
+import { RecommendedNextStep } from "../components/ModuleGuide";
 import StateBlock from "../components/StateBlock";
 import { alertService } from "../services/alertService";
 import { crimeService } from "../services/crimeService";
-import type { AlertCharts, AlertFilterOptions, AlertFilters, AlertSummary, RedZoneAlert } from "../types/crime";
+import type { AlertCharts, AlertFilterOptions, AlertFilters, AlertSummary, RedZoneAlert, TimeRiskResponse } from "../types/crime";
 import { formatCompactDateTime } from "../utils/formatters";
 
 const emptyFilters: AlertFilters = { district: "All", police_station: "All", crime_type: "All", severity: "All", fir_stage: "All", alert_type: "All", fir_year: "All", fir_month: "All" };
@@ -23,6 +24,124 @@ const severityClass = {
 const humanizeAlertType = (value?: string) => {
   const normalized = String(value || "No alerts").replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
   return normalized.replace(/\b\w/g, (letter) => letter.toUpperCase());
+};
+
+const formatAlertDateTime = (value?: string) => {
+  if (!value) return "Not available";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+};
+
+const anomalySentence = (alert: RedZoneAlert) => {
+  const crimeType = alert.crime_type || "Selected crime type";
+  const district = alert.district || "the selected district";
+  return `${crimeType} shows unusual activity in ${district}.`;
+};
+
+const DetailField = ({ label, value, className = "" }: { label: string; value?: string | number; className?: string }) => (
+  <div className={`card-safe rounded-md border border-command-700 bg-command-850 p-3 ${className}`}>
+    <p className="whitespace-nowrap text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">{label}</p>
+    <p className="text-safe mt-1 text-sm font-semibold text-white" title={String(value ?? "Not available")}>{value ?? "Not available"}</p>
+  </div>
+);
+
+const AnomalyCard = ({ alert, onViewDetails }: { alert: RedZoneAlert; onViewDetails: () => void }) => (
+  <article className="card-safe flex h-full flex-col rounded-md border border-command-700 bg-command-900/90 p-5 shadow-glow transition hover:border-command-500/70 hover:bg-command-850/80">
+    <div className="flex items-start justify-between gap-3">
+      <div className="min-w-0 flex-1">
+        <p className="text-safe truncate text-sm font-semibold text-command-300" title={alert.district}>{alert.district || "Unknown district"}</p>
+        <h3 className="text-safe mt-1 truncate text-lg font-semibold text-white" title={alert.crime_type}>{alert.crime_type || "Unknown crime type"}</h3>
+      </div>
+      <span className={`shrink-0 whitespace-nowrap rounded border px-2.5 py-1 text-xs font-semibold ${severityClass[alert.severity]}`}>{alert.severity}</span>
+    </div>
+
+    <div className="mt-3 inline-flex w-fit max-w-full rounded-full border border-command-700 bg-command-850 px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-slate-300">
+      <span className="truncate" title={humanizeAlertType(alert.alert_type)}>{humanizeAlertType(alert.alert_type)}</span>
+    </div>
+
+    <p className="text-safe mt-4 text-sm leading-6 text-slate-300">{anomalySentence(alert)}</p>
+
+    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+      <DetailField label="Current count" value={alert.current_value} />
+      <DetailField label="Historical average" value={alert.expected_value} />
+      <DetailField label="Increase" value={`${alert.increase_percentage}%`} />
+      <DetailField label="Detected" value={formatAlertDateTime(alert.detected_at)} />
+    </div>
+
+    <div className="text-safe mt-4 flex-1 rounded-md border border-command-700 bg-command-850 p-3 text-sm leading-6 text-slate-300">
+      <span className="font-semibold text-command-300">Suggested action: </span>
+      {alert.recommended_action || "Review case progress and strengthen investigation follow-up."}
+    </div>
+
+    <button
+      className="mt-4 inline-flex min-h-10 w-fit items-center gap-2 rounded-md border border-command-600 px-3 py-2 text-sm font-semibold text-command-100 transition hover:border-command-300 hover:bg-command-500/15 focus:outline-command-300"
+      onClick={onViewDetails}
+      type="button"
+    >
+      <Eye className="h-4 w-4" />
+      View Details
+    </button>
+  </article>
+);
+
+const AnomalyDetailsDrawer = ({ alert, onClose }: { alert: RedZoneAlert | null; onClose: () => void }) => {
+  useEffect(() => {
+    if (!alert) return undefined;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [alert, onClose]);
+
+  if (!alert) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-sm" onMouseDown={onClose} role="dialog" aria-modal="true" aria-label="Anomaly details">
+      <aside
+        className="h-full w-full max-w-2xl overflow-y-auto border-l border-command-700 bg-command-950 p-6 shadow-2xl"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-command-300">Anomaly Detail</p>
+            <h2 className="text-safe mt-2 text-2xl font-semibold text-white">{alert.crime_type || "Crime anomaly"}</h2>
+            <p className="text-safe mt-2 text-sm leading-6 text-slate-400">{anomalySentence(alert)}</p>
+          </div>
+          <button
+            aria-label="Close anomaly details"
+            className="shrink-0 rounded-md border border-command-700 p-2 text-slate-300 transition hover:bg-command-850 hover:text-white focus:outline-command-300"
+            onClick={onClose}
+            type="button"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="mt-6 grid gap-3 sm:grid-cols-2">
+          <DetailField label="District" value={alert.district} />
+          <DetailField label="Police Station" value={alert.police_station || "All stations"} />
+          <DetailField label="Crime Type" value={alert.crime_type} />
+          <DetailField label="Anomaly Type" value={humanizeAlertType(alert.alert_type)} />
+          <DetailField label="Current Count" value={alert.current_value} />
+          <DetailField label="Historical Average" value={alert.expected_value} />
+          <DetailField label="Increase" value={`${alert.increase_percentage}%`} />
+          <DetailField label="Detected" value={formatAlertDateTime(alert.detected_at)} />
+          <DetailField label="Severity" value={alert.severity} className={severityClass[alert.severity]} />
+        </div>
+
+        <section className="text-safe mt-5 rounded-md border border-command-700 bg-command-900/85 p-4">
+          <h3 className="text-sm font-semibold uppercase tracking-[0.14em] text-command-300">Why it was flagged</h3>
+          <p className="mt-3 text-sm leading-6 text-slate-300">{alert.explanation || "This signal was flagged because the current activity differs from the historical baseline for the selected records."}</p>
+        </section>
+
+        <section className="text-safe mt-4 rounded-md border border-command-700 bg-command-900/85 p-4">
+          <h3 className="text-sm font-semibold uppercase tracking-[0.14em] text-command-300">Suggested Action</h3>
+          <p className="mt-3 text-sm leading-6 text-slate-300">{alert.recommended_action || "Review case progress and strengthen investigation follow-up."}</p>
+        </section>
+      </aside>
+    </div>
+  );
 };
 
 const SelectFilter = ({ label, value, options, onChange }: { label: string; value?: string; options: string[]; onChange: (value: string) => void }) => (
@@ -60,6 +179,42 @@ const AlertCard = ({ alert }: { alert: RedZoneAlert }) => (
     <p className="text-safe mt-3 rounded border border-command-700 bg-command-850 p-3 text-sm text-command-300">{alert.recommended_action}</p>
   </article>
 );
+
+const confidenceClass = {
+  High: "border-alert-high/60 bg-alert-high/10 text-alert-high",
+  Medium: "border-alert-medium/60 bg-alert-medium/10 text-alert-medium",
+  Low: "border-alert-low/60 bg-alert-low/10 text-alert-low"
+};
+
+const TimeRiskCard = ({ alert }: { alert: TimeRiskResponse["alerts"][number] }) => {
+  const riskLabel = alert.riskWindow || alert.riskPeriod || "Date pattern unavailable";
+  const station = alert.policeStation || alert.police_station || "All Stations";
+  const action = alert.suggestedAction || alert.suggested_action || "Review FIR clusters and plan preventive checks during high-risk periods.";
+  return (
+    <article className="card-safe rounded-md border border-command-700 bg-command-900/90 p-5 shadow-glow">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-command-300">{alert.hasExactTime ? "Hour-level pattern" : "Date/month fallback"}</p>
+          <h3 className="text-safe mt-1 truncate-2 text-lg font-semibold text-white" title={alert.crimeType}>{alert.crimeType}</h3>
+          <p className="text-safe mt-1 text-sm text-slate-400">{alert.district}{station && station !== "All Stations" ? ` / ${station}` : ""}</p>
+        </div>
+        <span className={`shrink-0 rounded border px-2 py-1 text-xs font-semibold ${confidenceClass[alert.confidence]}`}>{alert.confidence}</span>
+      </div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <div className="rounded border border-command-700 bg-command-850 p-3">
+          <p className="text-xs uppercase tracking-[0.14em] text-slate-500">{alert.hasExactTime ? "Risk Window" : "Risk Period"}</p>
+          <p className="text-safe mt-1 text-sm font-semibold text-white">{riskLabel}</p>
+        </div>
+        <div className="rounded border border-command-700 bg-command-850 p-3">
+          <p className="text-xs uppercase tracking-[0.14em] text-slate-500">Evidence</p>
+          <p className="mt-1 text-sm font-semibold text-white">{alert.evidenceCount.toLocaleString()} matching records</p>
+        </div>
+      </div>
+      <p className="text-safe mt-4 text-sm leading-6 text-slate-300">{alert.message}</p>
+      <p className="text-safe mt-3 rounded border border-command-700 bg-command-850 p-3 text-sm text-command-300">{action}</p>
+    </article>
+  );
+};
 
 const SpikeComparisonChart = ({ data }: { data: AlertCharts["spikeComparison"] }) => (
   <section className="rounded-md border border-command-700 bg-command-900/85 p-5 shadow-glow">
@@ -118,12 +273,15 @@ const Alerts = () => {
   const [options, setOptions] = useState<AlertFilterOptions>(emptyOptions);
   const [summary, setSummary] = useState<AlertSummary | null>(null);
   const [alerts, setAlerts] = useState<RedZoneAlert[]>([]);
+  const [timeRisk, setTimeRisk] = useState<TimeRiskResponse | null>(null);
+  const [timeRiskError, setTimeRiskError] = useState("");
   const [whispers, setWhispers] = useState<string[]>([]);
   const [charts, setCharts] = useState<AlertCharts>(emptyCharts);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [errorDetail, setErrorDetail] = useState("");
   const [storedCount, setStoredCount] = useState<number | null>(null);
+  const [selectedAnomaly, setSelectedAnomaly] = useState<RedZoneAlert | null>(null);
 
   const loadAlerts = async (nextFilters: AlertFilters) => {
     try {
@@ -140,6 +298,14 @@ const Alerts = () => {
       setAlerts(alertsRes.data);
       setWhispers(whispersRes.data);
       setCharts({ ...emptyCharts, ...chartsRes.data });
+      try {
+        const timeRiskRes = await alertService.getTimeRisk(nextFilters);
+        setTimeRisk(timeRiskRes.data);
+        setTimeRiskError("");
+      } catch (timeErr) {
+        setTimeRisk(null);
+        setTimeRiskError(timeErr instanceof Error ? timeErr.message : "Unable to load time-based crime risk.");
+      }
     } catch (err) {
       const detail = err instanceof Error ? err.message : "Unable to load Red-Zone Alerts.";
       setErrorDetail(detail);
@@ -203,6 +369,8 @@ const Alerts = () => {
         </button>
       </div>
 
+      <RecommendedNextStep title="Explore Crime Trend & Hotspot Explorer" description="Use the spatial view to see where the strongest alert and crime concentration signals are occurring." to="/crime-trend-hotspot" action="Open Explorer" />
+
       <section className="rounded-md border border-command-700 bg-command-900/85 p-5 shadow-glow">
         <h2 className="text-base font-semibold text-white">Alert Filters</h2>
         <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -247,6 +415,35 @@ const Alerts = () => {
         )}
       </section>
 
+      <section className="rounded-md border border-command-500/40 bg-command-900/85 p-5 shadow-glow">
+        <div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-start">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <Clock className="h-5 w-5 text-command-300" />
+              <h2 className="text-base font-semibold text-white">Time-Based Crime Risk</h2>
+            </div>
+            <p className="text-safe mt-2 text-sm leading-6 text-slate-400">Identifies when crime risk appears higher based on uploaded FIR records.</p>
+          </div>
+          {!timeRisk?.has_exact_time_data && (
+            <p className="card-safe max-w-xl border border-command-700 bg-command-850 p-3 text-xs leading-5 text-slate-300">
+              Exact incident hour not available in uploaded data. Showing date/month-based risk periods instead. To enable hour-level alerts, upload data with incident time or FIR time columns.
+            </p>
+          )}
+        </div>
+        {timeRisk?.message && <p className="text-safe mt-4 rounded border border-command-700 bg-command-850 p-3 text-sm text-command-300">{timeRisk.message}</p>}
+        {timeRiskError ? (
+          <StateBlock title="Time-risk alerts unavailable" message={timeRiskError} />
+        ) : !timeRisk?.alerts?.length ? (
+          <div className="mt-4">
+            <StateBlock title="No time-based risk patterns detected" message="Time-based risk cards will appear when the selected records contain enough date, month, or incident-time evidence." />
+          </div>
+        ) : (
+          <div className="mt-4 grid gap-4 xl:grid-cols-2">
+            {timeRisk.alerts.map((alert) => <TimeRiskCard key={alert.alert_id} alert={alert} />)}
+          </div>
+        )}
+      </section>
+
       <section className="rounded-md border border-command-700 bg-command-900/85 p-5 shadow-glow">
         <h2 className="text-base font-semibold text-white">Pattern Whisper Alerts</h2>
         <div className="mt-4 grid gap-3 md:grid-cols-2">
@@ -270,44 +467,30 @@ const Alerts = () => {
       </div>
 
       <section className="rounded-md border border-command-700 bg-command-900/85 p-5 shadow-glow">
-        <h2 className="text-base font-semibold text-white">Anomaly Detection Table</h2>
-        <div className="mt-4 overflow-x-auto">
-          <table className="min-w-full divide-y divide-command-700 text-left text-sm">
-            <thead className="bg-command-850 text-xs uppercase text-slate-400">
-              <tr>
-                <th className="px-3 py-3">District</th>
-                <th className="px-3 py-3">Crime Type</th>
-                <th className="px-3 py-3">Anomaly Type</th>
-                <th className="px-3 py-3">Current</th>
-                <th className="px-3 py-3">Historical Avg</th>
-                <th className="px-3 py-3">Increase</th>
-                <th className="px-3 py-3">Severity</th>
-                <th className="px-3 py-3">Detected</th>
-                <th className="px-3 py-3">Suggested Action</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-command-700/70">
-              {alerts.length === 0 ? (
-                <tr>
-                  <td colSpan={9} className="px-3 py-8 text-center text-slate-400">No major red-zone alerts detected for the selected filters.</td>
-                </tr>
-              ) : alerts.map((alert) => (
-                <tr key={alert.alert_id} className="hover:bg-command-850/70">
-                  <td className="whitespace-nowrap px-3 py-3 text-slate-200">{alert.district}</td>
-                  <td className="whitespace-nowrap px-3 py-3 text-slate-300">{alert.crime_type}</td>
-                  <td className="whitespace-nowrap px-3 py-3 text-command-300">{alert.alert_type}</td>
-                  <td className="px-3 py-3 text-slate-300">{alert.current_value}</td>
-                  <td className="px-3 py-3 text-slate-300">{alert.expected_value}</td>
-                  <td className="px-3 py-3 text-slate-300">{alert.increase_percentage}%</td>
-                  <td className="px-3 py-3"><span className={`rounded border px-2 py-1 text-xs font-semibold ${severityClass[alert.severity]}`}>{alert.severity}</span></td>
-                  <td className="whitespace-nowrap px-3 py-3 text-slate-300">{new Date(alert.detected_at).toLocaleString()}</td>
-                  <td className="min-w-72 px-3 py-3 text-slate-300">{alert.recommended_action}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
+          <div className="min-w-0">
+            <h2 className="text-base font-semibold text-white">Anomaly Detection</h2>
+            <p className="text-safe mt-2 text-sm leading-6 text-slate-400">Detects unusual crime patterns by comparing current activity with historical trends.</p>
+          </div>
+          <span className="w-fit shrink-0 whitespace-nowrap rounded-full border border-command-700 bg-command-850 px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-command-300">
+            {alerts.length} signals
+          </span>
         </div>
+
+        {alerts.length === 0 ? (
+          <div className="mt-4">
+            <StateBlock title="No unusual anomaly signals detected for the current filters." message="Adjust filters or refresh after new records are imported to review new anomaly signals." />
+          </div>
+        ) : (
+          <div className="mt-4 grid items-stretch gap-4 lg:grid-cols-2 2xl:grid-cols-3">
+            {alerts.map((alert) => (
+              <AnomalyCard key={alert.alert_id} alert={alert} onViewDetails={() => setSelectedAnomaly(alert)} />
+            ))}
+          </div>
+        )}
       </section>
+
+      <AnomalyDetailsDrawer alert={selectedAnomaly} onClose={() => setSelectedAnomaly(null)} />
     </div>
   );
 };

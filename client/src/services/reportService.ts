@@ -1,5 +1,8 @@
 import type { DashboardFilterOptions, GeneratedReportResponse, ReportRequest } from "../types/crime";
 import { readJsonOrLocalFallback } from "./localFallback";
+import { crimeService } from "./crimeService";
+import { toDashboardFilterOptions } from "../utils/dynamicFilterOptions";
+import { buildCacheKey, cachedApiFetch, CACHE_TTL } from "../utils/apiCache";
 
 const reportApiBase = import.meta.env.VITE_REPORT_API_BASE || "/server/report-api";
 
@@ -12,18 +15,25 @@ const extractApiData = <T,>(response: ApiEnvelope<T> | T | null | undefined): T 
 };
 
 const request = async <T>(path: string, options?: RequestInit): Promise<T> => {
-  const response = await fetch(`${reportApiBase}${path}`, {
+  const method = String(options?.method || "GET").toUpperCase();
+  const cachePost = path.includes("/preview");
+  return cachedApiFetch<T>(buildCacheKey(`reports:${path}`, { body: options?.body ? String(options.body) : "" }), `${reportApiBase}${path}`, {
     headers: options?.body instanceof FormData ? undefined : { "Content-Type": "application/json" },
-    ...options
+    ...options,
+    ttlMs: CACHE_TTL.reports,
+    cachePost,
+    forceRefresh: method !== "GET" && !cachePost,
+    parseResponse: async (response) => {
+      const parsed = await readJsonOrLocalFallback<ApiEnvelope<T> | T>(response, path);
+      if (!response.ok || (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) && "success" in parsed && parsed.success === false)) {
+        const failure = parsed as ApiEnvelope<T>;
+        throw new Error([`Endpoint: ${path}`, `Status: ${response.status}`, failure.message, failure.error, failure.details].filter(Boolean).join(" | "));
+      }
+      const data = extractApiData<T>(parsed);
+      if (data === null) throw new Error(`Endpoint: ${path} | Report API returned no data.`);
+      return data;
+    }
   });
-  const parsed = await readJsonOrLocalFallback<ApiEnvelope<T> | T>(response, path);
-  if (!response.ok || (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) && "success" in parsed && parsed.success === false)) {
-    const failure = parsed as ApiEnvelope<T>;
-    throw new Error([`Endpoint: ${path}`, `Status: ${response.status}`, failure.message, failure.error, failure.details].filter(Boolean).join(" | "));
-  }
-  const data = extractApiData<T>(parsed);
-  if (data === null) throw new Error(`Endpoint: ${path} | Report API returned no data.`);
-  return data;
 };
 
 export interface ReportSummary {
@@ -38,7 +48,7 @@ export interface ReportSummary {
 
 export const reportService = {
   getSummary: () => request<ReportSummary>("/report/summary"),
-  getFilters: () => request<DashboardFilterOptions>("/report/filters"),
+  getFilters: async () => toDashboardFilterOptions((await crimeService.getCrimeRecordFilters()).data),
   preview: (payload: ReportRequest) => request<GeneratedReportResponse>("/report/preview", { method: "POST", body: JSON.stringify(payload) }),
   generate: (payload: ReportRequest) => request<GeneratedReportResponse>("/report/generate", { method: "POST", body: JSON.stringify(payload) })
 };

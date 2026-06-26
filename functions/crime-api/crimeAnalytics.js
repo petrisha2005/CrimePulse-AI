@@ -1,5 +1,8 @@
 const CRIME_TABLE = process.env.CRIME_TABLE || process.env.CRIME_RECORDS_TABLE || "CrimeRecords";
-const DEFAULT_LIMIT = Number(process.env.CRIME_ANALYTICS_FETCH_LIMIT || 5000);
+const ANALYTICS_CACHE_TABLE = process.env.ANALYTICS_CACHE_TABLE || "AnalyticsCache";
+const ANALYTICS_CACHE_KEY = process.env.ANALYTICS_CACHE_KEY || "crime_records_full_dataset";
+const PAGE_SIZE = Math.max(50, Math.min(Number(process.env.CRIME_ANALYTICS_PAGE_SIZE || 200), 300));
+const memoryCache = new Map();
 
 const clean = (value) => String(value ?? "").trim();
 const hasValue = (value) => clean(value) !== "";
@@ -59,31 +62,74 @@ function normalizeRecord(row) {
   };
 }
 
-async function fetchCrimeRecords(app, options = {}) {
-  const limit = Math.max(1, Math.min(Number(options.limit || DEFAULT_LIMIT), DEFAULT_LIMIT));
-  let rows = [];
-  try {
-    rows = unwrapRows(await app.zcql().executeZCQLQuery(`SELECT * FROM ${CRIME_TABLE} LIMIT ${limit}`));
-  } catch (zcqlError) {
-    console.error("[crimeAnalytics] ZCQL fetch failed, falling back to getAllRows", zcqlError);
-    rows = unwrapRows(await app.datastore().table(CRIME_TABLE).getAllRows()).slice(0, limit);
-  }
-  const normalized = rows.map(normalizeRecord);
-  return options.filters ? applyFilters(normalized, options.filters) : normalized;
+function unwrapPagedRows(result) {
+  const rows = unwrapRows(result);
+  const nextToken = result?.next_token || result?.nextToken || result?.data?.next_token || result?.data?.nextToken || "";
+  const moreRecords = Boolean(result?.more_records || result?.moreRecords || result?.data?.more_records || result?.data?.moreRecords || nextToken);
+  return { rows, nextToken, moreRecords };
 }
 
-async function forEachCrimeRecordPage(app, filters = {}, pageSize = 500, callback) {
-  const size = Math.max(50, Math.min(Number(pageSize) || 500, 1000));
-  let offset = 0;
+async function fetchAllCrimeRecords(app, options = {}) {
+  const pageSize = Math.max(50, Math.min(Number(options.pageSize || PAGE_SIZE), 300));
+  const rows = [];
+  let nextToken;
+
+  try {
+    const table = app.datastore().table(CRIME_TABLE);
+    while (true) {
+      const page = await table.getPagedRows({ nextToken, maxRows: pageSize });
+      const { rows: pageRows, nextToken: next, moreRecords } = unwrapPagedRows(page);
+      rows.push(...pageRows);
+      if (!moreRecords || !next || pageRows.length === 0) break;
+      nextToken = next;
+    }
+  } catch (pagedError) {
+    console.warn("[crimeAnalytics] Data Store paged fetch failed, falling back to ZCQL pagination", pagedError.message);
+    let offset = 0;
+    while (true) {
+      const pageRows = unwrapRows(await app.zcql().executeZCQLQuery(`SELECT * FROM ${CRIME_TABLE} LIMIT ${pageSize} OFFSET ${offset}`));
+      rows.push(...pageRows);
+      if (pageRows.length < pageSize) break;
+      offset += pageSize;
+    }
+  }
+
+  const normalized = rows.map(normalizeRecord);
+  const filtered = options.filters ? applyFilters(normalized, options.filters) : normalized;
+  if (options.includeMeta) {
+    return {
+      records: filtered,
+      totalFetched: filtered.length,
+      totalAvailable: normalized.length,
+      meta: {
+        totalUploadedRecords: normalized.length,
+        recordsAnalyzed: filtered.length,
+        analysisScope: options.filters && Object.values(normalizeFilters(options.filters)).some(isActiveFilter) ? "filtered_dataset" : "full_dataset",
+        isSampled: false
+      }
+    };
+  }
+  return filtered;
+}
+
+async function fetchCrimeRecords(app, options = {}) {
+  return fetchAllCrimeRecords(app, options);
+}
+
+async function forEachCrimeRecordPage(app, filters = {}, pageSize = PAGE_SIZE, callback) {
+  const size = Math.max(50, Math.min(Number(pageSize) || 200, 300));
+  let nextToken;
   let processed = 0;
+  const table = app.datastore().table(CRIME_TABLE);
   while (true) {
-    const result = await app.zcql().executeZCQLQuery(`SELECT * FROM ${CRIME_TABLE} LIMIT ${size} OFFSET ${offset}`);
-    const page = unwrapRows(result).map(normalizeRecord);
+    const result = await table.getPagedRows({ nextToken, maxRows: size });
+    const { rows, nextToken: next, moreRecords } = unwrapPagedRows(result);
+    const page = rows.map(normalizeRecord);
     const filtered = applyFilters(page, filters);
-    if (filtered.length) await callback(filtered, { offset, processed });
+    if (filtered.length) await callback(filtered, { nextToken, processed });
     processed += page.length;
-    if (page.length < size) break;
-    offset += size;
+    if (!moreRecords || !next || page.length === 0) break;
+    nextToken = next;
   }
   return processed;
 }
@@ -96,8 +142,10 @@ function normalizeFilters(params = {}) {
     district: pick("district"),
     police_station: pick("police_station"),
     crime_type: pick("crime_type"),
+    crime_subtype: pick("crime_subtype"),
     severity: pick("severity"),
     fir_stage: pick("fir_stage", "status"),
+    complaint_mode: pick("complaint_mode"),
     dataset_id: pick("dataset_id")
   };
 }
@@ -115,8 +163,10 @@ function applyFilters(records, params = {}) {
     if (isActiveFilter(filters.district) && record.district !== filters.district) return false;
     if (isActiveFilter(filters.police_station) && record.police_station !== filters.police_station) return false;
     if (isActiveFilter(filters.crime_type) && record.crime_type !== filters.crime_type) return false;
+    if (isActiveFilter(filters.crime_subtype) && record.crime_subtype !== filters.crime_subtype) return false;
     if (isActiveFilter(filters.severity) && record.severity !== filters.severity && record.severity_original !== filters.severity) return false;
     if (isActiveFilter(filters.fir_stage) && record.fir_stage !== filters.fir_stage) return false;
+    if (isActiveFilter(filters.complaint_mode) && record.complaint_mode !== filters.complaint_mode) return false;
     if (isActiveFilter(filters.dataset_id) && record.dataset_id !== filters.dataset_id) return false;
     return true;
   });
@@ -174,6 +224,10 @@ function getGlobalStats(records) {
   const coordinatePercentage = pct(withCoordinates, records.length);
   return {
     total_records: records.length,
+    total_uploaded_records: records.length,
+    records_analyzed: records.length,
+    analysis_scope: "full_dataset",
+    is_sampled: false,
     total_districts: unique(records, "district").length,
     total_police_stations: unique(records, "police_station").length,
     year_range: years.length ? `${Math.min(...years)}-${Math.max(...years)}` : "No data",
@@ -457,12 +511,161 @@ function filterOptions(records) {
   };
 }
 
+function datasetSignature(records) {
+  const lastUpdated = records.map((record) => record.created_time || record.MODIFIEDTIME || record.imported_at).filter(Boolean).sort().at(-1) || "";
+  return `${records.length}:${lastUpdated}`;
+}
+
+function buildCrimeAnalyticsSummary(records) {
+  const generatedAt = new Date().toISOString();
+  const globalStats = getGlobalStats(records);
+  const dashboardSummary = getDashboardSummary(records);
+  const monthlyTrends = getMonthlyTrend(records);
+  const yearlyTrends = getYearlyTrend(records);
+  const crimeTypes = topN(records, "crime_type", 25).map((item) => ({ ...item, crime_type: item.name }));
+  const districtRanking = topN(records, "district", 25).map((item) => ({ ...item, district: item.name }));
+  const policeStationRanking = topN(records, "police_station", 25).map((item) => ({ ...item, police_station: item.name }));
+  const crimeGroupRanking = topN(records, "crime_type", 25).map((item) => ({ ...item, crime_type: item.name }));
+  const crimeHeadRanking = topN(records, "crime_subtype", 25).map((item) => ({ ...item, crime_subtype: item.name }));
+  const firStageSummary = topN(records, "fir_stage", 25).map((item) => ({ ...item, fir_stage: item.name }));
+  const complaintModeSummary = topN(records, "complaint_mode", 25).map((item) => ({ ...item, complaint_mode: item.name }));
+  const recentRecords = [...records]
+    .sort((a, b) => toNumber(b.ROWID) - toNumber(a.ROWID) || (b.created_time || "").localeCompare(a.created_time || ""))
+    .slice(0, 25);
+  const alerts = detectAnomalies(records);
+  const patterns = discoverPatterns(records).slice(0, 100);
+  const filters = filterOptions(records);
+  return {
+    cache_key: ANALYTICS_CACHE_KEY,
+    cacheVersion: "v1",
+    generatedAt,
+    datasetSignature: datasetSignature(records),
+    recordsAnalyzed: records.length,
+    totalRecords: records.length,
+    globalStats,
+    dashboardSummary,
+    monthlyTrends,
+    yearlyTrends,
+    crimeTypes,
+    districtRanking,
+    policeStationRanking,
+    crimeGroupRanking,
+    crimeHeadRanking,
+    firStageSummary,
+    complaintModeSummary,
+    recentRecords,
+    alerts,
+    patterns,
+    reportSummaryInputs: {
+      recordsAnalyzed: records.length,
+      topDistricts: districtRanking.slice(0, 10),
+      topPoliceStations: policeStationRanking.slice(0, 10),
+      topCrimeTypes: crimeTypes.slice(0, 10),
+      yearlyTrends,
+      monthlyTrends,
+      coordinateCoverage: globalStats.coordinate_available_percentage,
+      dataQualityScore: globalStats.data_quality_score
+    },
+    redZoneInputs: {
+      topDistricts: districtRanking.slice(0, 10),
+      topCrimeTypes: crimeTypes.slice(0, 10),
+      severityCounts: topN(records, "severity", 10),
+      latestPeriod: monthlyTrends.at(-1)?.period || ""
+    },
+    patternDiscoveryInputs: {
+      topCrimeTypes: crimeTypes.slice(0, 10),
+      topStations: policeStationRanking.slice(0, 10),
+      topDistricts: districtRanking.slice(0, 10)
+    },
+    filterOptions: filters
+  };
+}
+
+function cachedPayload(value) {
+  if (!value) return null;
+  if (typeof value === "string") {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+  return value;
+}
+
+async function readAnalyticsCache(app, cacheKey = ANALYTICS_CACHE_KEY) {
+  const memory = memoryCache.get(cacheKey);
+  if (memory) return { ...memory, storage: "memory" };
+  try {
+    const table = app.datastore().table(ANALYTICS_CACHE_TABLE);
+    const rows = unwrapRows(await table.getAllRows());
+    const row = rows.map((item) => item?.[ANALYTICS_CACHE_TABLE] || item).find((item) => clean(item.cache_key) === cacheKey);
+    const summary = cachedPayload(row?.cache_value_json);
+    if (!summary) return null;
+    const result = { summary, generatedAt: row.generated_at || summary.generatedAt, recordsAnalyzed: toNumber(row.records_analyzed || summary.recordsAnalyzed), datasetSignature: row.dataset_signature || summary.datasetSignature, cacheVersion: summary.cacheVersion || "v1", storage: "datastore" };
+    memoryCache.set(cacheKey, result);
+    return result;
+  } catch (error) {
+    console.warn("[crimeAnalytics] AnalyticsCache read skipped", error.message);
+    return null;
+  }
+}
+
+async function writeAnalyticsCache(app, summary, cacheKey = ANALYTICS_CACHE_KEY) {
+  const record = {
+    cache_key: cacheKey,
+    cache_value_json: JSON.stringify(summary),
+    records_analyzed: summary.recordsAnalyzed || summary.totalRecords || 0,
+    generated_at: summary.generatedAt || new Date().toISOString(),
+    dataset_signature: summary.datasetSignature || ""
+  };
+  const memoryRecord = { summary, generatedAt: record.generated_at, recordsAnalyzed: record.records_analyzed, datasetSignature: record.dataset_signature, cacheVersion: summary.cacheVersion || "v1", storage: "memory" };
+  memoryCache.set(cacheKey, memoryRecord);
+  try {
+    const table = app.datastore().table(ANALYTICS_CACHE_TABLE);
+    const rows = unwrapRows(await table.getAllRows());
+    const existing = rows.map((item) => item?.[ANALYTICS_CACHE_TABLE] || item).find((item) => clean(item.cache_key) === cacheKey);
+    if (existing?.ROWID) await table.updateRow({ ROWID: existing.ROWID, ...record });
+    else await table.insertRow(record);
+    memoryCache.set(cacheKey, { ...memoryRecord, storage: "datastore" });
+  } catch (error) {
+    console.warn("[crimeAnalytics] AnalyticsCache Data Store write skipped; using in-memory cache", error.message);
+  }
+  return memoryCache.get(cacheKey);
+}
+
+async function rebuildAnalyticsCache(app, records) {
+  const sourceRecords = records || await fetchCrimeRecords(app);
+  const summary = buildCrimeAnalyticsSummary(sourceRecords);
+  const cache = await writeAnalyticsCache(app, summary);
+  return { summary, cache };
+}
+
+async function clearAnalyticsCache(app, cacheKey = ANALYTICS_CACHE_KEY) {
+  memoryCache.delete(cacheKey);
+  try {
+    const table = app.datastore().table(ANALYTICS_CACHE_TABLE);
+    const rows = unwrapRows(await table.getAllRows());
+    const matches = rows.map((item) => item?.[ANALYTICS_CACHE_TABLE] || item).filter((item) => clean(item.cache_key) === cacheKey && item.ROWID);
+    for (const row of matches) await table.deleteRow(row.ROWID);
+    return matches.length;
+  } catch (error) {
+    console.warn("[crimeAnalytics] AnalyticsCache clear skipped", error.message);
+    return 0;
+  }
+}
+
 module.exports = {
+  ANALYTICS_CACHE_KEY,
+  ANALYTICS_CACHE_TABLE,
   CRIME_TABLE,
   applyFilters,
+  buildCrimeAnalyticsSummary,
   calculateRiskScore,
+  clearAnalyticsCache,
   detectAnomalies,
   discoverPatterns,
+  fetchAllCrimeRecords,
   fetchCrimeRecords,
   forEachCrimeRecordPage,
   filterOptions,
@@ -477,7 +680,9 @@ module.exports = {
   isHeinous,
   isNonHeinous,
   normalizeFilters,
+  readAnalyticsCache,
   recommendedAction,
+  rebuildAnalyticsCache,
   topN,
   toNumber,
   unique
