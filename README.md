@@ -2,22 +2,6 @@
 
 ### AI-Powered Crime Intelligence & Decision Support Platform for Karnataka Police
 
-<p align="center">
-  <img src="assets/crimepulse-logo.png" alt="CrimePulse AI Logo" width="250"/>
-</p>
-
-<p align="center">
-
-
-
-
-
-\
-
-</p>
-
----
-
 ## 📌 Overview
 
 CrimePulse AI is an AI-powered Crime Intelligence & Decision Support Platform designed for Karnataka Police to transform raw FIR datasets into actionable intelligence.
