@@ -257,7 +257,43 @@ functions/
 ```
 
 ---
+# ⚙️ Installation
 
+## Clone the repository
+
+```bash
+git clone https://github.com/<your-username>/<repo-name>.git
+cd <repo-name>
+```
+
+## Install Frontend
+
+```bash
+cd client
+npm install
+```
+
+## Install Backend
+
+```bash
+cd ../functions
+npm install
+```
+
+## Run the Frontend
+
+```bash
+cd client
+npm run dev
+```
+
+## Deploy to Zoho Catalyst
+
+```bash
+catalyst deploy
+```
+
+---
 # 🌟 Future Scope
 
 * Live FIR Integration
