@@ -1,259 +1,307 @@
-# CrimePulse AI
+# 🚔 CrimePulse AI
 
-CrimePulse AI is a Zoho Catalyst-ready AI-Powered Crime Intelligence & Predictive Risk Dashboard for Karnataka Police.
+### AI-Powered Crime Intelligence & Decision Support Platform for Karnataka Police
 
-CrimePulse AI transforms Karnataka Police crime records into a live intelligence command center that detects hotspots, predicts risk, explains crime patterns, and recommends preventive action.
+<p align="center">
+  <img src="assets/crimepulse-logo.png" alt="CrimePulse AI Logo" width="250"/>
+</p>
 
-## Problem Statement
+<p align="center">
 
-Manual crime records make it difficult to detect hidden crime patterns, compare districts, identify emerging risks, and generate timely intelligence reports for police leadership.
 
-## Solution
 
-CrimePulse AI uses Zoho Catalyst Functions and Data Store to aggregate real uploaded crime records, then presents explainable crime intelligence through React dashboards and AI-assisted reporting. AI explanations are generated only from calculated analytics and do not invent statistics.
 
-## Key Features
 
-- Secure Catalyst Authentication login flow
-- CSV upload for Karnataka crime data
-- Crime Command Dashboard with KPIs, trends, charts, rankings, filters, and CSV export
-- District Risk DNA with explainable risk score engine
-- Red-Zone Pulse Alerts and anomaly detection
-- Hotspot Map using MapLibre
-- Crime Time Machine for period comparison
-- Crime Weather Forecast
-- Socio-Economic Insights
-- Pattern Discovery Engine
-- AI Story Mode and Heat-to-Action recommendations
-- AI Intelligence Report PDF generator
-- Hackathon Presentation Mode for guided judging
-- Global dataset status widget
+\
 
-## Unique Innovations
+</p>
 
-- District Risk DNA for explainable district intelligence
-- Red-Zone Pulse Alerts for unusual spikes
-- Crime Time Machine for temporal comparison
-- Crime Weather Forecast for near-term risk awareness
-- Heat-to-Action recommendations for field deployment
-- Pattern Whisper alerts for short operational signals
-- AI reports grounded only in calculated Catalyst analytics
+---
 
-## Tech Stack
+## 📌 Overview
 
-- Frontend: React, TypeScript, Tailwind CSS
-- Charts: Recharts
-- Maps: MapLibre
-- Backend: Zoho Catalyst Serverless Functions with Node.js
-- Database: Zoho Catalyst Data Store
-- Authentication: Zoho Catalyst Authentication
-- Hosting: Zoho Catalyst Web Client Hosting
-- AI explanations: Gemini API with rule-based fallback
+CrimePulse AI is an AI-powered Crime Intelligence & Decision Support Platform designed for Karnataka Police to transform raw FIR datasets into actionable intelligence.
 
-This project does not use Vercel, Firebase, FastAPI, Express, or MongoDB.
+The platform enables law enforcement agencies to analyze crime data, identify hotspots, detect anomalies, assess district risks, generate AI-powered insights, and create professional intelligence reports—all through a single unified dashboard.
 
-## Catalyst Setup
+---
 
-Install the Catalyst CLI:
+## 🎯 Problem Statement
 
-```bash
-npm install -g zcatalyst-cli
-```
+Police departments handle thousands of FIR records every year.
 
-Log in:
+Manual analysis of these records makes it difficult to:
 
-```bash
-catalyst login
-```
+* Detect crime hotspots
+* Identify emerging crime patterns
+* Compare district performance
+* Prioritize police resources
+* Generate intelligence reports quickly
 
-Initialize from the project folder:
+CrimePulse AI automates this entire workflow using analytics, geospatial visualization, and AI.
 
-```bash
-cd kavach-analytics
-catalyst init
-```
+# 🚀 Deployment
 
-Enable:
+### Live Demo
 
-- Functions
-- Web Client
-- Data Store
-- Authentication
+https://datanexuscrime-60073499856.development.catalystserverless.in/app/
 
-## Environment Variables
+---
 
-Copy `.env.example` to `client/.env` and configure the Catalyst project values:
+# ✨ Key Features
+
+## 📂 Smart FIR Upload
+
+* CSV Upload
+* Duplicate Detection
+* Data Validation
+* Automatic Processing
+* Secure Storage using Zoho Catalyst
+
+---
+
+## 📊 Interactive Dashboard
+
+* Crime Overview
+* District Analytics
+* Crime Distribution
+* Severity Analysis
+* Monthly Trends
+* Recent Crime Records
+
+---
+
+## 🚨 Risk Intelligence Center
+
+* District Risk Score
+* Police Station Ranking
+* High-Risk Identification
+* Risk Breakdown
+* Explainable Risk Analysis
+
+---
+
+## ⚠️ Alerts & Pattern Detection
+
+Automatically identifies:
+
+* Crime Spikes
+* Unusual Trends
+* Pending FIR Patterns
+* Data Quality Issues
+* Operational Alerts
+
+---
+
+## 🗺️ Crime Trend & Hotspot Explorer
+
+* Interactive Maps
+* Crime Hotspots
+* Heatmaps
+* Red Zone Alerts
+* Timeline Analysis
+* Dynamic Filters
+
+---
+
+## 🌍 Community & Operational Insights
+
+* Population Density Proxy
+* Urbanization Indicators
+* Literacy Proxy
+* Crime Correlation Analysis
+
+---
+
+## 🤖 AI Insights
+
+* Executive Summary
+* Crime Intelligence
+* District Recommendations
+* Explainable Analytics
+* Operational Suggestions
+
+---
+
+## 📄 AI Report Generator
+
+Generate professional reports:
+
+* Executive Summary
+* District Intelligence Report
+* Crime Trend Report
+* Risk Assessment
+* Forecast Report
+
+Export formats:
+
+* PDF
+* HTML
+* Markdown
+
+---
+
+## 🎥 Presentation Mode
+
+Large-screen dashboard designed for command center briefings and demonstrations.
+
+---
+
+# 🛠 Tech Stack
+
+### Frontend
+
+* React
+* TypeScript
+* Vite
+* Tailwind CSS
+* Recharts
+* MapLibre GL
+* OpenStreetMap
+
+### Backend
+
+* Node.js
+* Zoho Catalyst Functions
+
+### Database
+
+* Zoho Catalyst Data Store
+
+### Hosting
+
+* Zoho Catalyst Hosting
+
+### AI
+
+* Gemini AI (Optional)
+* Rule-Based Analytics Engine
+
+---
+
+# ⚙️ Workflow
+
+Police Login
+
+↓
+
+Upload FIR Dataset
+
+↓
+
+Data Validation
+
+↓
+
+Catalyst Data Store
+
+↓
+
+Analytics Engine
+
+↓
+
+Risk Scoring
+
+↓
+
+Pattern Detection
+
+↓
+
+Hotspot Detection
+
+↓
+
+AI Insights
+
+↓
+
+Interactive Dashboard
+
+↓
+
+Professional Reports
+
+---
+
+# 📈 Performance
+
+* Tested with **9,793+ FIR Records**
+* Dynamic dataset analysis
+* Interactive filtering
+* Real-time dashboard updates
+* Professional report generation
+* Responsive UI
+* Serverless deployment on Zoho Catalyst
+
+---
+
+# 🔐 Security
+
+* Role-Based Authentication
+* Secure Serverless APIs
+* Environment Variables
+* Data Validation
+* Duplicate Detection
+* Controlled Data Access
+
+---
+
+# 📂 Project Structure
 
 ```text
-VITE_CATALYST_PROJECT_ID=your_catalyst_project_id
-VITE_CATALYST_ENVIRONMENT=Development
-VITE_CRIME_API_BASE=/server/crime-api
-VITE_DASHBOARD_API_BASE=/server/dashboard-api
-VITE_RISK_API_BASE=/server/risk-api
-VITE_ALERT_API_BASE=/server/alert-api
-VITE_MAP_API_BASE=/server/map-api
-VITE_TIME_MACHINE_API_BASE=/server/time-machine-api
-VITE_FORECAST_API_BASE=/server/forecast-api
-VITE_SOCIO_ECONOMIC_API_BASE=/server/socio-economic-api
-VITE_PATTERN_API_BASE=/server/pattern-api
-VITE_REPORT_API_BASE=/server/report-api
-VITE_AI_API_BASE=/server/ai-api
+client/
+├── src/
+│   ├── components/
+│   ├── pages/
+│   ├── hooks/
+│   ├── services/
+│   ├── assets/
+│   └── utils/
+
+functions/
+├── dashboard-api/
+├── crime-api/
+├── map-api/
+├── risk-api/
+├── alert-api/
+├── pattern-api/
+├── report-api/
+├── ai-api/
+└── ...
 ```
 
-Configure Catalyst Function environment variables:
+---
 
-```text
-CRIME_RECORDS_TABLE=CrimeRecords
-GEMINI_API_KEY=your_gemini_api_key
-```
+# 🌟 Future Scope
 
-If `GEMINI_API_KEY` is omitted, AI report and insight modules generate rule-based fallback text.
+* Live FIR Integration
+* Predictive Machine Learning
+* CCTV Integration
+* GIS Mapping
+* Mobile Application
+* Real-time Notifications
+* Officer Performance Analytics
+* Resource Allocation Optimization
+* Voice-enabled AI Assistant
+* Statewide Deployment
 
-## Data Store Tables
+---
 
-Create `CrimeRecords` in Zoho Catalyst Data Store with:
+# 👨‍💻 Team
 
-```text
-crime_id, district, police_station, crime_type, crime_subtype, severity,
-severity_original, fir_year, fir_month, fir_day, crime_date, latitude_value, longitude_value,
-offence_location, beat_name, village_area_name, fir_stage, complaint_mode,
-act_section, victim_count, accused_count, arrested_count, conviction_count,
-unit_id, created_time
-```
+**Data Nexus**
 
-Create `AIInsights` with:
+Developed for the Karnataka Police Crime Intelligence Challenge.
 
-```text
-insight_id, insight_type, title, district, crime_type, year, month,
-input_summary, generated_text, recommendations, generated_at
-```
+---
 
-Create `AIReports` if using PDF report history:
+# 📜 License
 
-```text
-report_id, report_title, report_type, district, generated_at,
-pdf_file_id_or_path
-```
+This project is developed for educational, research, and hackathon purposes.
 
-## Demo Login
+---
 
-Hackathon-only demo roles:
+## ⭐ If you found this project interesting, consider giving it a Star!
 
-```text
-Super Admin: admin@crimepulse.ai / Admin@123
-District Command Officer: district@crimepulse.ai / District@123
-Police Station Officer: station@crimepulse.ai / Station@123
-Crime Analyst: analyst@crimepulse.ai / Analyst@123
-```
-
-These local credentials are for the demo flow only. Replace them with Catalyst Authentication role claims before production deployment.
-
-## Install Dependencies
-
-Install client dependencies:
-
-```bash
-cd client
-npm install
-```
-
-Install function dependencies:
-
-```bash
-cd ../functions/crime-api && npm install
-cd ../dashboard-api && npm install
-cd ../risk-api && npm install
-cd ../alert-api && npm install
-cd ../map-api && npm install
-cd ../time-machine-api && npm install
-cd ../forecast-api && npm install
-cd ../socio-economic-api && npm install
-cd ../pattern-api && npm install
-cd ../report-api && npm install
-cd ../ai-api && npm install
-```
-
-## Run Locally
-
-From the project root:
-
-```bash
-catalyst serve
-```
-
-For Vite-only UI preview:
-
-```bash
-cd client
-npm run dev -- --host 127.0.0.1
-```
-
-Vite-only preview uses safe empty local fallbacks when Catalyst Functions are not mounted. Use `catalyst serve` for live Catalyst Data Store data.
-
-## Upload Sample CSV
-
-Use `sample-crime-data.csv` for a small test upload first. The real dataset can be large, so validate with a 1000-row sample before importing the full file.
-
-Required source columns:
-
-```text
-District_Name, UnitName, FIR_YEAR, FIR_MONTH, FIR_Day, CrimeGroup_Name
-```
-
-Latitude and longitude may be missing. Rows are still inserted for district-level analytics.
-
-## APIs
-
-### crime-api
-
-- `GET /crimes`
-- `POST /crimes`
-- `PUT /crimes/:ROWID`
-- `DELETE /crimes/:ROWID`
-- `POST /crimes/upload-csv`
-- `GET /crimes/filter`
-
-### dashboard-api
-
-- `GET /dashboard/global-stats`
-- `GET /dashboard/summary`
-- `GET /dashboard/monthly-trends`
-- `GET /dashboard/yearly-trends`
-- `GET /dashboard/crime-types`
-- `GET /dashboard/district-ranking`
-- `GET /dashboard/police-station-ranking`
-- `GET /dashboard/crime-group-ranking`
-- `GET /dashboard/crime-head-ranking`
-- `GET /dashboard/fir-stage-summary`
-- `GET /dashboard/complaint-mode-summary`
-- `GET /dashboard/recent-records`
-- `GET /dashboard/filters`
-
-Additional Catalyst Functions include `risk-api`, `alert-api`, `map-api`, `time-machine-api`, `forecast-api`, `socio-economic-api`, `pattern-api`, `report-api`, and `ai-api`.
-
-## Deploy
-
-From the project root:
-
-```bash
-catalyst deploy
-```
-
-After deployment:
-
-- Add the deployed web client URL to Catalyst Authentication allowed redirect URLs
-- Verify Data Store table permissions
-- Configure `GEMINI_API_KEY` in Catalyst Function environment variables
-- Upload a small CSV sample
-- Open `/presentation-mode` for the hackathon demo journey
-
-## Future Scope
-
-- Role-based access for command, district, and station-level officers
-- Scheduled alert generation
-- Case workflow integration
-- Karnataka boundary choropleth overlays
-- Real-time alert notifications
-- Model-assisted investigation summaries
-- Evidence and charge-sheet tracking integrations
-- Production-only Catalyst Auth without demo fallback
